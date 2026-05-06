@@ -36,10 +36,11 @@ from __future__ import annotations
 import logging
 import random
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from schemas import PredictionResponse, SensorPayload
@@ -91,6 +92,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     `@app.on_event("startup")` decorator per FastAPI ≥ 0.93 best practices.
     """
     # ── Startup ───────────────────────────────────────────────────────────────
+    # Record boot time as a timezone-aware UTC datetime so the /health endpoint
+    # can compute uptime_seconds with sub-second precision on every request.
+    # Stored on app.state to avoid module-level globals and ensure correctness
+    # across hot-reloads (each reload re-enters lifespan, resetting the clock).
+    app.state.start_time = datetime.now(timezone.utc)
     logger.info("🚀  HVAC Predictive Maintenance API starting up...")
     logger.warning(
         "⚠️  ML model not yet loaded — prediction endpoint is running in "
@@ -265,6 +271,52 @@ async def root() -> dict[str, str]:
         "version": "0.1.0",
         "docs": "/docs",
     }
+
+
+@app.get(
+    "/api/v1/health",
+    status_code=status.HTTP_200_OK,
+    summary="Readiness & Liveness Probe",
+    tags=["System"],
+    response_description=(
+        "Server status, engine metadata, ISO 8601 timestamp, uptime in seconds, "
+        "and ML model load state."
+    ),
+    responses={
+        200: {"description": "Server is online and ready to accept requests."},
+    },
+)
+async def health_check(request: Request) -> dict:
+    """
+    Readiness and liveness probe for load balancers, orchestrators, and the
+    frontend latency monitor.
+
+    All work is O(1): two `datetime.now()` calls and a subtraction. Safe to
+    hammer at any polling frequency without measurable performance impact.
+
+    ### Response Fields
+    - **status** — Always `"online"` when this endpoint is reachable.
+    - **engine** — Framework identifier for infrastructure routing rules.
+    - **version** — API semver; mirrors the value declared in the app factory.
+    - **timestamp** — Current server UTC time in ISO 8601 format. Clients can
+      diff this against their local clock to estimate one-way network latency.
+    - **uptime_seconds** — Fractional seconds since the lifespan startup hook
+      ran. Resets on every uvicorn hot-reload, which is intentional — a
+      fresh reload is a fresh boot as far as state is concerned.
+    - **ml_model_loaded** — Reflects whether `app.state.model` has been
+      populated by the lifespan startup block. Currently `False` (mock mode).
+    """
+    now: datetime = datetime.now(timezone.utc)
+    uptime: float = (now - request.app.state.start_time).total_seconds()
+
+    return {
+        "status":           "online",
+        "engine":           "FastAPI",
+        "version":          "0.1.0",
+        "timestamp":        now.isoformat(),
+        "uptime_seconds":   round(uptime, 3),
+        "ml_model_loaded":  False,   # ← Flip to: hasattr(request.app.state, "model")
+    }                                #   once model.pkl is loaded in lifespan
 
 
 @app.post(

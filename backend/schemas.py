@@ -203,25 +203,189 @@ class SensorPayload(BaseModel):
 
     # ── Cross-field validator ─────────────────────────────────────────────────
 
+    @model_validator(mode="before")
+    @classmethod
+    def prevent_bool_coercion(cls, data: Any) -> Any:
+        """
+        Intercept the raw request dictionary before Pydantic's internal type
+        coercion pipeline runs and explicitly reject any field whose value is
+        a boolean.
+
+        Threat Vector — SCADA Relay State Corruption via Bool→Float Coercion
+        ───────────────────────────────────────────────────────────────────────
+        In Python's type hierarchy, `bool` is a direct subclass of `int`:
+
+            bool → int → object
+
+        Pydantic v2's numeric coercion pipeline calls `float(value)` on
+        incoming data for fields typed as `float`. Because `float(True)`
+        returns `1.0` and `float(False)` returns `0.0`, a boolean value
+        silently passes field-level validation and is stored as a float
+        with no error or warning raised.
+
+        In industrial HVAC SCADA systems this is a realistic and silent
+        threat: Modbus coil registers are boolean relay states (open/closed
+        contactor flags). If a protocol bridge accidentally maps a coil
+        register to a continuous sensor field (e.g., mapping a relay state
+        of `True` to `vibration_rms`), the payload arrives with
+        `"vibration_rms": true` in JSON. Without this validator, Pydantic
+        coerces True → 1.0 mm/s, which is within the ge=0.0, le=500.0
+        bounds and passes all field-level checks. The ML model receives a
+        structurally valid but semantically corrupted feature vector and
+        produces a confidently wrong prediction — a silent false negative
+        on a potentially failing chiller, with no error surfaced anywhere
+        in the pipeline.
+
+        Why `type(value) is bool` and NOT `isinstance(value, bool)`
+        ─────────────────────────────────────────────────────────────
+        `isinstance(True, int)` evaluates to True because bool is a
+        subclass of int. Using `isinstance(value, bool)` would be
+        semantically correct for detecting booleans, but `type(value) is bool`
+        makes the intent unambiguous: this is an EXACT type identity check,
+        not a subclass membership test. It reads as "is this value literally
+        and precisely a bool" — which is the honest expression of the guard.
+
+        Execution Order — mode="before"
+        ────────────────────────────────
+        This validator runs on the raw, uncoerced input dict before Pydantic
+        converts any values. If this ran in mode="after", `True` would already
+        have been coerced to `1.0` and the bool identity check would find a
+        float, allowing the corrupted value through silently.
+
+        Parameters
+        ----------
+        data : Any
+            Raw incoming value passed to the model constructor. Non-dict
+            inputs are returned unchanged and allowed to fail Pydantic's
+            own structural validation.
+
+        Returns
+        -------
+        Any
+            The original `data` dict, unmodified, if no boolean values are
+            detected. Pydantic's standard coercion pipeline proceeds normally.
+
+        Raises
+        ------
+        ValueError
+            If any field in the input dictionary carries a boolean value.
+            The message includes the field name and offending value to produce
+            an immediately actionable 422 error detail for the SCADA gateway
+            operator to diagnose the misconfigured register mapping.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        for field_name, value in data.items():
+            if type(value) is bool:
+                raise ValueError(
+                    f"Field '{field_name}' received a boolean value ({value!r}), "
+                    "which is not a valid sensor reading. "
+                    "Boolean SCADA relay states must not be mapped to continuous "
+                    "sensor fields. "
+                    f"Expected a numeric float or int; got type '{type(value).__name__}'. "
+                    "Check the protocol bridge register mapping for this sensor channel."
+                )
+
+        return data
+
     @model_validator(mode="after")
     def suction_must_be_below_discharge_pressure(self) -> "SensorPayload":
         """
-        Physical law: discharge pressure must always exceed suction pressure
-        in a vapour-compression refrigeration cycle. If suction ≥ discharge,
-        the compressor has stalled or the sensors are swapped/faulty.
+        Enforce the fundamental thermodynamic pressure relationship of a
+        vapour-compression refrigeration cycle: discharge pressure must always
+        exceed suction pressure by a meaningful margin in a running chiller.
 
-        Note: A tolerance of 5 PSI is allowed to account for transient startup
-        conditions and sensor sampling jitter.
+        Threat Vector — Physical Thermodynamic Impossibility / Sensor Wiring Fault
+        ──────────────────────────────────────────────────────────────────────────
+        In every vapour-compression refrigeration cycle, the compressor exists
+        precisely to elevate refrigerant pressure from the low-side (suction)
+        to the high-side (discharge). The pressure ratio (Pd / Ps) for a
+        healthy 200-ton water-cooled chiller is typically 2.0–3.5. If suction
+        pressure meets or exceeds discharge pressure, one of three catastrophic
+        conditions has occurred:
+
+          1. COMPRESSOR SEIZURE: The compressor shaft has stopped rotating
+             entirely. The high and low refrigerant sides have equalised
+             through back-flow across the compressor valves. The chiller is
+             mechanically dead and represents an immediate safety risk if the
+             operator attempts a hot restart without inspection.
+
+          2. REVERSING VALVE FAILURE: A four-way reversing valve (present in
+             heat pump configurations) has failed in the mid-position,
+             cross-connecting the high and low pressure sides. This causes
+             rapid refrigerant migration, liquid slugging, and compressor
+             damage within minutes of continued operation.
+
+          3. SENSOR WIRING SWAP: The suction and discharge pressure
+             transducers have been connected to the wrong ports — most commonly
+             during post-maintenance recommissioning. The chiller may be
+             operating normally, but every reading from both pressure channels
+             is inverted, making all pressure-based diagnostics meaningless
+             and causing the ML model to produce systematically wrong
+             predictions for the life of the misconfiguration.
+
+        In all three cases, admitting the reading to the ML model produces a
+        meaningless or actively misleading prediction based on physically
+        impossible input. The schema must reject it so the SCADA operator
+        receives an immediate, specific error rather than a silently wrong
+        maintenance recommendation.
+
+        Tolerance Margin
+        ────────────────
+        A 5.0 PSI tolerance is applied: suction_press must be less than
+        (discharge_press - 5.0). This absorbs:
+          • Sensor sampling jitter (±1–2 PSI on industrial transducers)
+          • Normal startup transients during the first compressor revolution
+            before full pressure differential is established
+          • Minor pressure equalisation during a controlled, soft stop
+
+        Without this tolerance, a sensor that reads 172.1 PSI suction vs.
+        172.0 PSI discharge during a 50ms startup window would falsely
+        reject a valid cold-start reading.
+
+        Execution Order — mode="after"
+        ────────────────────────────────
+        This validator runs after all individual field validators have passed
+        and all field values have been coerced to their declared types. Using
+        mode="after" gives access to `self.suction_press` and
+        `self.discharge_press` as fully typed, validated Python floats —
+        making the arithmetic comparison safe and unambiguous.
+
+        Returns
+        -------
+        SensorPayload
+            The fully validated model instance, unmodified, if the pressure
+            relationship is physically plausible.
+
+        Raises
+        ------
+        ValueError
+            If suction_press >= (discharge_press - tolerance), indicating a
+            stalled compressor, equalised system, or swapped sensor wiring.
+            The message includes the actual PSI values to give the field
+            engineer precise diagnostic data without requiring log access.
         """
         tolerance: float = 5.0
-        if self.suction_press >= (self.discharge_press + tolerance):
-            raise ValueError(
-                f"Physical constraint violated: suction_press ({self.suction_press} PSI) "
-                f"must be less than discharge_press ({self.discharge_press} PSI). "
-                "This indicates a stalled compressor or swapped sensor wiring."
-            )
-        return self
 
+        if self.suction_press >= (self.discharge_press - tolerance):
+            raise ValueError(
+                f"Physical constraint violated: suction_press "
+                f"({self.suction_press} PSI) must be meaningfully less than "
+                f"discharge_press ({self.discharge_press} PSI) in a running "
+                f"vapour-compression cycle (required margin: {tolerance} PSI). "
+                "This reading indicates one of three fault conditions: "
+                "(1) compressor seizure — shaft rotation has stopped and "
+                "refrigerant sides have equalised via back-flow; "
+                "(2) reversing valve failure — high and low pressure sides "
+                "are cross-connected, causing liquid slugging; or "
+                "(3) swapped sensor wiring — suction and discharge transducers "
+                "are connected to the wrong ports post-maintenance. "
+                "Do not submit this reading to the ML model. "
+                "Inspect the physical installation before resuming operation."
+            )
+
+        return self
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  RESPONSE SCHEMA
