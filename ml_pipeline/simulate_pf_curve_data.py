@@ -26,7 +26,6 @@ degradation thresholds, representing the actionable P-F window).
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Union
 from pathlib import Path
 
 # ── Reproducibility ──────────────────────────────────────────────────────────
@@ -49,7 +48,7 @@ OUTPUT_FILE: Path = OUTPUT_DIR / "hvac_sensor_data.csv"
 # ══════════════════════════════════════════════════════════════════════════════
 
 def add_noise(
-    signal: Union[float, np.ndarray],
+    signal: float | np.ndarray,
     std: float,
     size: int = 1,
 ) -> np.ndarray:

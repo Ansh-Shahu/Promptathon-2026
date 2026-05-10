@@ -36,17 +36,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-
-# ── Re-usable annotated float types (DRY) ─────────────────────────────────────
-
-# Temperature in °F — used for multiple sensor channels
-TempF = Annotated[float, Field(ge=-60.0, le=400.0)]
-
-# Pressure in PSI — used for multiple sensor channels
-PressurePSI = Annotated[float, Field(ge=0.0, le=600.0)]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -502,6 +494,152 @@ class PredictionResponse(BaseModel):
                 "Received an empty or whitespace-only string."
             )
         return self
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DASHBOARD STATS SCHEMA
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DashboardStatsResponse(BaseModel):
+    """
+    Aggregate KPI summary returned by GET /api/v1/stats.
+
+    Designed to power the top-level stat strip on the HVAC dashboard in a
+    single lightweight query rather than requiring the frontend to compute
+    aggregates from the raw /history feed.
+
+    All fields are derived from the sensor_logs table via SQLAlchemy
+    aggregate functions (COUNT, SUM, MAX) — a single round-trip to the DB.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total_readings": 1179,
+                "total_anomalies": 285,
+                "anomaly_rate_percentage": 24.17,
+                "max_risk_score": 0.991234,
+                "avg_risk_score": 0.183451,
+                "latest_reading_timestamp": "2024-02-07T09:00:00",
+            }
+        }
+    )
+
+    total_readings: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Total number of sensor readings persisted in the database. "
+            "Includes both nominal and anomalous readings across all loops."
+        ),
+    )
+
+    total_anomalies: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Count of readings where is_anomalous=True. "
+            "Represents the number of times the prediction engine "
+            "flagged a P-F curve threshold breach."
+        ),
+    )
+
+    anomaly_rate_percentage: float = Field(
+        ...,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Percentage of all readings classified as anomalous, "
+            "rounded to 2 decimal places. "
+            "Formula: (total_anomalies / total_readings) × 100. "
+            "Returns 0.0 when total_readings is zero."
+        ),
+    )
+
+    max_risk_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Highest failure_risk_score seen across all stored readings. "
+            "Useful as a session-peak alert indicator on the dashboard. "
+            "Returns 0.0 when the database is empty."
+        ),
+    )
+
+    avg_risk_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Session-wide average failure_risk_score across all stored readings. "
+            "A gradually rising average on a nominally healthy fleet is the "
+            "primary early signal of model drift — the model is becoming "
+            "over-sensitive before any single reading crosses an alert threshold. "
+            "Returns 0.0 when the database is empty."
+        ),
+    )
+
+    latest_reading_timestamp: str = Field(
+        ...,
+        description=(
+            "ISO 8601 timestamp of the most recently persisted sensor reading. "
+            "Stored as a string to preserve the exact format written by the "
+            "prediction endpoint. Returns 'N/A' when the database is empty."
+        ),
+    )
+
+    # ── Validators ────────────────────────────────────────────────────────────
+
+    @field_validator("anomaly_rate_percentage", mode="before")
+    @classmethod
+    def round_anomaly_rate(cls, v: float) -> float:
+        """
+        Round the raw computed rate to 2 decimal places before bounds checking.
+
+        Prevents floating-point artefacts (e.g., 24.1666666...) from
+        polluting the dashboard display and avoids precision noise in
+        client-side threshold comparisons.
+        """
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"anomaly_rate_percentage must be numeric; got {type(v).__name__!r}."
+            ) from exc
+
+    @field_validator("max_risk_score", mode="before")
+    @classmethod
+    def round_max_risk_score(cls, v: float) -> float:
+        """
+        Round max_risk_score to 6 decimal places, consistent with the
+        precision applied to individual failure_risk_score values in
+        PredictionResponse. Prevents representation artefacts from
+        SQLAlchemy's MAX() aggregate result.
+        """
+        try:
+            return round(float(v), 6)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"max_risk_score must be numeric; got {type(v).__name__!r}."
+            ) from exc
+
+    @field_validator("avg_risk_score", mode="before")
+    @classmethod
+    def round_avg_risk_score(cls, v: float) -> float:
+        """
+        Round avg_risk_score to 6 decimal places for consistent precision
+        with max_risk_score and individual PredictionResponse scores.
+        SQLAlchemy's AVG() returns a raw IEEE 754 double that may carry
+        representation noise (e.g., 0.18345100000000002).
+        """
+        try:
+            return round(float(v), 6)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"avg_risk_score must be numeric; got {type(v).__name__!r}."
+            ) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════

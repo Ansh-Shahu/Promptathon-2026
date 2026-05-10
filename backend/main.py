@@ -1,3 +1,5 @@
+# backend/main.py
+
 """
 main.py
 ─────────────────────────────────────────────────────────────────────────────
@@ -18,6 +20,12 @@ API Contract
     Request  → schemas.SensorPayload
     Response → schemas.PredictionResponse
 
+  GET  /api/v1/history
+    Response → list[dict] — most recent 100 sensor + prediction log entries
+
+  GET  /api/v1/health
+    Response → liveness/readiness probe with uptime and model state
+
 Mock Prediction Strategy
 ────────────────────────
   The Random Forest model is not yet trained. Until model.pkl is available,
@@ -29,21 +37,49 @@ Mock Prediction Strategy
   Replace the block marked ── REPLACE WITH ML INFERENCE ── with:
     model.predict_proba(feature_vector)[0][1]
   when the trained model artifact is available.
+
+Async Write Architecture
+────────────────────────
+  Database persistence is handled via FastAPI's BackgroundTasks mechanism.
+  The HTTP response is returned to the client immediately after ML inference
+  completes; the database write is dispatched as a non-blocking background
+  task. This architecture guarantees:
+
+    • P99 response latency is bounded by ML inference time only — SQLite I/O
+      jitter (fsync latency, WAL checkpoint stalls) never appears in the
+      client-facing latency distribution.
+    • Under burst load, database writes queue behind the response without
+      creating backpressure on the ASGI event loop.
+    • A database write failure does not degrade the prediction response — the
+      client receives a valid prediction regardless of persistence outcome.
+      Persistence errors are logged server-side for async alerting.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Sequence
+
+try:
+    import joblib
+    _JOBLIB_AVAILABLE = True
+except ImportError:
+    joblib = None  # type: ignore[assignment]
+    _JOBLIB_AVAILABLE = False
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
-from schemas import PredictionResponse, SensorPayload
+import crud
+from database import Base, SessionLocal, engine, get_db
+from schemas import DashboardStatsResponse, PredictionResponse, SensorPayload
+from config import settings
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -84,33 +120,66 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Manage application startup and shutdown lifecycle events.
 
-    Startup:  Load ML model artifact from disk (stubbed here — swap the
-              comment block for real model loading once model.pkl exists).
-    Shutdown: Release any held resources (DB connections, GPU memory, etc.).
+    Startup
+    ───────
+    1. Record boot time on app.state for the /health uptime calculation.
+    2. Materialise all SQLAlchemy ORM models as physical database tables via
+       `Base.metadata.create_all(bind=engine)`. This is idempotent — it issues
+       CREATE TABLE IF NOT EXISTS statements, so existing tables and their data
+       are never dropped or truncated on restart. On first boot against a fresh
+       SQLite file, this creates the `sensor_logs` table automatically without
+       requiring a migration tool.
+    3. Log mock-mode warning until model.pkl is available.
 
-    Using the modern `lifespan` pattern instead of the deprecated
-    `@app.on_event("startup")` decorator per FastAPI ≥ 0.93 best practices.
+    Shutdown
+    ────────
+    Release any held resources. The SQLAlchemy connection pool is disposed
+    automatically when the engine goes out of scope; explicit disposal here
+    is a safety net for long-running process managers that reuse the engine
+    across multiple lifespan cycles.
+
+    Using the modern `lifespan` context manager pattern instead of the
+    deprecated `@app.on_event("startup")` decorator per FastAPI ≥ 0.93
+    best practices.
     """
     # ── Startup ───────────────────────────────────────────────────────────────
-    # Record boot time as a timezone-aware UTC datetime so the /health endpoint
-    # can compute uptime_seconds with sub-second precision on every request.
-    # Stored on app.state to avoid module-level globals and ensure correctness
-    # across hot-reloads (each reload re-enters lifespan, resetting the clock).
     app.state.start_time = datetime.now(timezone.utc)
     logger.info("🚀  HVAC Predictive Maintenance API starting up...")
-    logger.warning(
-        "⚠️  ML model not yet loaded — prediction endpoint is running in "
-        "MOCK MODE based on ISO 10816 vibration threshold heuristic."
-    )
 
-    # ── FUTURE: Load trained model here ──────────────────────────────────────
-    # import joblib
-    # app.state.model = joblib.load("model.pkl")
-    # logger.info("✅  Random Forest model loaded from model.pkl")
+    # Materialise ORM-declared tables into the SQLite file.
+    # Safe to call on every restart — CREATE TABLE IF NOT EXISTS semantics.
+    Base.metadata.create_all(bind=engine)
+    logger.info("✅  Database tables verified / created via Base.metadata.create_all.")
+
+    # ── Load trained ML model (graceful fallback to mock mode) ────────────────
+    # joblib is imported at the top of this module with an ImportError guard.
+    # If model.pkl is missing or corrupted the API stays online in mock mode
+    # rather than crashing at startup.
+    try:
+        if not _JOBLIB_AVAILABLE:
+            raise ImportError("joblib is not installed")
+        model_path = os.path.join(os.path.dirname(__file__), settings.MODEL_PATH.lstrip("./"))
+        app.state.model = joblib.load(model_path)
+        logger.info("✅  ML model loaded from %s", model_path)
+    except FileNotFoundError:
+        app.state.model = None
+        logger.warning(
+            "⚠️  model.pkl not found at '%s' — prediction endpoint is running in "
+            "MOCK MODE based on ISO 10816 vibration threshold heuristic.",
+            settings.MODEL_PATH,
+        )
+    except Exception as exc:
+        app.state.model = None
+        logger.error(
+            "❌  Failed to load ML model — falling back to MOCK MODE | error=%s",
+            str(exc),
+            exc_info=True,
+        )
 
     yield  # Application runs while control is inside this block
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
+    engine.dispose()
     logger.info("🛑  HVAC Predictive Maintenance API shutting down.")
 
 
@@ -129,9 +198,12 @@ app = FastAPI(
         "> ⚠️ **Mock Mode Active.** The Random Forest model is not yet trained. "
         "Predictions are generated using an ISO 10816 vibration threshold "
         "heuristic (`vibration_rms > 4.5 mm/s`) to unblock frontend development.\n\n"
-        "## Prediction Endpoint\n"
+        "## Endpoints\n"
         "- **`POST /api/v1/predict`** — Submit a real-time sensor reading and "
-        "receive a failure risk score, anomaly flag, and actionable maintenance alert.\n\n"
+        "receive a failure risk score, anomaly flag, and actionable maintenance alert.\n"
+        "- **`GET /api/v1/history`** — Retrieve the 100 most recent sensor "
+        "readings and their associated ML prediction results.\n"
+        "- **`GET /api/v1/health`** — Liveness and readiness probe.\n\n"
         "## Sensor Schema\n"
         "All 10 sensor parameters are validated against physical bounds wide "
         "enough to admit P-F curve degradation states. See `SensorPayload` for "
@@ -140,13 +212,12 @@ app = FastAPI(
     version="0.1.0",
     contact={
         "name": "HVAC Platform — Hackathon Team",
-        "email": "team@hvac-predictive.local",
+        "email": "team@hvac-predictive.com",
     },
     license_info={
         "name": "MIT",
     },
     lifespan=lifespan,
-    # Disable the default /docs redirect from / to keep the root endpoint clean
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -165,7 +236,7 @@ app = FastAPI(
 # Tighten allow_origins to specific domains in production.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # ← Tighten to specific origins in production
+    allow_origins=settings.cors_origins_list,        # ← Tighten to specific origins in production
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -254,22 +325,23 @@ def _mock_predict(payload: SensorPayload) -> PredictionResponse:
 
 @app.get(
     "/",
-    summary="Health Check",
+    summary="Root — API Liveness",
     tags=["System"],
-    response_description="API liveness confirmation.",
+    response_description="Static liveness confirmation payload.",
 )
 async def root() -> dict[str, str]:
     """
-    Lightweight liveness probe.
+    Lightweight root liveness probe.
 
     Returns a static JSON payload confirming the API is reachable.
-    Suitable for load-balancer health checks and uptime monitors.
+    Suitable for load-balancer health checks and uptime monitors that
+    do not require the richer metadata provided by /api/v1/health.
     """
     return {
-        "status": "ok",
+        "status":  "ok",
         "service": "HVAC Predictive Maintenance API",
         "version": "0.1.0",
-        "docs": "/docs",
+        "docs":    "/docs",
     }
 
 
@@ -286,7 +358,7 @@ async def root() -> dict[str, str]:
         200: {"description": "Server is online and ready to accept requests."},
     },
 )
-async def health_check(request: Request) -> dict:
+async def health_check(request: Request) -> dict[str, Any]:
     """
     Readiness and liveness probe for load balancers, orchestrators, and the
     frontend latency monitor.
@@ -301,8 +373,7 @@ async def health_check(request: Request) -> dict:
     - **timestamp** — Current server UTC time in ISO 8601 format. Clients can
       diff this against their local clock to estimate one-way network latency.
     - **uptime_seconds** — Fractional seconds since the lifespan startup hook
-      ran. Resets on every uvicorn hot-reload, which is intentional — a
-      fresh reload is a fresh boot as far as state is concerned.
+      ran. Resets on every uvicorn hot-reload.
     - **ml_model_loaded** — Reflects whether `app.state.model` has been
       populated by the lifespan startup block. Currently `False` (mock mode).
     """
@@ -310,13 +381,13 @@ async def health_check(request: Request) -> dict:
     uptime: float = (now - request.app.state.start_time).total_seconds()
 
     return {
-        "status":           "online",
-        "engine":           "FastAPI",
-        "version":          "0.1.0",
-        "timestamp":        now.isoformat(),
-        "uptime_seconds":   round(uptime, 3),
-        "ml_model_loaded":  False,   # ← Flip to: hasattr(request.app.state, "model")
-    }                                #   once model.pkl is loaded in lifespan
+        "status":          "online",
+        "engine":          "FastAPI",
+        "version":         "0.1.0",
+        "timestamp":       now.isoformat(),
+        "uptime_seconds":  round(uptime, 3),
+        "ml_model_loaded": getattr(request.app.state, "model", None) is not None,
+    }
 
 
 @app.post(
@@ -346,10 +417,26 @@ async def health_check(request: Request) -> dict:
         },
     },
 )
-async def predict_failure_risk(payload: SensorPayload) -> PredictionResponse:
+async def predict_failure_risk(
+    payload: SensorPayload,
+    background_tasks: BackgroundTasks,
+) -> PredictionResponse:
     """
-    Accept a real-time HVAC chiller sensor reading and return a failure
-    risk prediction.
+    Accept a real-time HVAC chiller sensor reading, generate a failure risk
+    prediction, and asynchronously persist the combined reading + prediction
+    to the database without blocking the HTTP response.
+
+    ### Async Write Architecture
+    ML inference is synchronous and CPU-bound; database I/O is asynchronous
+    and unpredictably slow under SQLite WAL checkpoint pressure. To prevent
+    SQLite I/O jitter from inflating P99 prediction latency, the database
+    write is dispatched via `background_tasks.add_task()`. The client receives
+    the `PredictionResponse` immediately after inference completes; the
+    `crud.create_sensor_log()` call executes after the response has been sent.
+
+    This means a database write failure does not degrade the prediction
+    response delivered to the SCADA client — persistence errors are logged
+    server-side without impacting the real-time safety alert pipeline.
 
     ### Current Behaviour (Mock Mode)
     Applies an **ISO 10816 vibration threshold heuristic**:
@@ -357,7 +444,8 @@ async def predict_failure_risk(payload: SensorPayload) -> PredictionResponse:
     - `vibration_rms ≤ 4.5 mm/s` → Low risk score (0.01–0.15), nominal.
 
     ### Future Behaviour (Model Mode)
-    Replace mock logic with `model.predict_proba(feature_vector)[0][1]`
+    Replace mock logic in `_mock_predict()` with:
+        `model.predict_proba(feature_vector)[0][1]`
     once the Scikit-Learn Random Forest artifact is available.
 
     ### Validation
@@ -380,6 +468,31 @@ async def predict_failure_risk(payload: SensorPayload) -> PredictionResponse:
             response.failure_risk_score,
         )
 
+        # ── Async persistence — fire-and-forget after response is sent ────────
+        # IMPORTANT: We do NOT pass the request-scoped `db` session here.
+        # FastAPI tears down Depends() sessions after the response is sent,
+        # which races with background task execution and causes DetachedInstanceError.
+        # Instead, the background task opens its own independent session.
+        prediction_dict: dict[str, Any] = {
+            "failure_risk_score": response.failure_risk_score,
+            "is_anomalous":       response.is_anomalous,
+            "actionable_alert":   response.actionable_alert,
+        }
+
+        def _persist_in_background(telemetry: dict, prediction: dict) -> None:
+            """Open a dedicated session scoped to this background write only."""
+            bg_db = SessionLocal()
+            try:
+                crud.create_sensor_log(bg_db, telemetry, prediction)
+            finally:
+                bg_db.close()
+
+        background_tasks.add_task(
+            _persist_in_background,
+            payload.model_dump(),
+            prediction_dict,
+        )
+
         return response
 
     except HTTPException:
@@ -400,6 +513,163 @@ async def predict_failure_risk(payload: SensorPayload) -> PredictionResponse:
                 "An unexpected error occurred while processing the prediction. "
                 "The error has been logged. Please retry or contact support."
             ),
+        ) from exc
+
+@app.get(
+    "/api/v1/history",
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve Paginated Sensor and Prediction History",
+    tags=["History"],
+    response_description=(
+        "Paginated list of sensor telemetry readings and their associated ML "
+        "prediction results, ordered newest first."
+    ),
+    responses={
+        200: {"description": "History page retrieved successfully."},
+        422: {
+            "description": (
+                "Validation Error — `skip` is negative or `limit` exceeds "
+                "the maximum permitted value of 1000."
+            )
+        },
+        500: {
+            "description": (
+                "Internal Server Error — unexpected failure reading from the "
+                "database. The raw error is logged server-side."
+            )
+        },
+    },
+)
+async def get_prediction_history(
+    db: Session = Depends(get_db),
+    skip: int = Query(
+        default=0,
+        ge=0,
+        description=(
+            "Number of rows to skip from the top of the newest-first ordered "
+            "result set. Use in combination with `limit` to implement "
+            "offset-based pagination. Must be non-negative."
+        ),
+    ),
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum number of rows to return after the offset is applied. "
+            "Defaults to 100. Capped at 1000 to prevent full-table scans "
+            "from degrading server performance under concurrent load."
+        ),
+    ),
+) -> list[dict[str, Any]]:
+    """
+    Retrieve a paginated window of sensor telemetry readings and their
+    associated ML prediction results from the persistence layer.
+
+    ### Pagination
+    Use `skip` and `limit` as query parameters to navigate the history:
+    - `GET /api/v1/history` → latest 100 rows (dashboard default)
+    - `GET /api/v1/history?skip=100&limit=100` → rows 101–200
+    - `GET /api/v1/history?skip=0&limit=25` → latest 25 rows only
+
+    Results are always ordered by `timestamp` descending (newest first),
+    so page 1 (`skip=0`) always contains the most recent readings regardless
+    of the `limit` value chosen.
+
+    ### Guardrails
+    Both `skip` and `limit` are validated by FastAPI's `Query` dependency
+    before the route handler executes. Requests with `skip < 0` or
+    `limit > 1000` are rejected with a `422 Unprocessable Entity` before
+    any database I/O is attempted — protecting the connection pool from
+    abusive or accidental full-table scan requests.
+
+    ### Persistence Lag
+    Because predictions are written via `BackgroundTasks`, there is a small
+    window (typically < 100ms) between a prediction response being delivered
+    and its corresponding row appearing in the history. This is acceptable
+    for a dashboard polling every few seconds; synchronous writes would be
+    required for a strictly consistent audit log.
+    """
+    try:
+        logs: Sequence = crud.get_recent_logs(db, skip=skip, limit=limit)
+        return [log.to_dict() for log in logs]
+
+    except Exception as exc:
+        logger.exception(
+            "Unhandled exception in get_prediction_history | error=%s", str(exc)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "An unexpected error occurred while retrieving prediction history. "
+                "The error has been logged. Please retry or contact support."
+            ),
+        ) from exc
+
+
+@app.get(
+    "/api/v1/stats",
+    response_model=DashboardStatsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Dashboard KPI Aggregate Statistics",
+    tags=["Stats"],
+    response_description=(
+        "Aggregate KPI snapshot: total readings, anomaly count, anomaly rate, "
+        "peak risk score, average risk score, and latest reading timestamp."
+    ),
+    responses={
+        200: {"description": "Aggregate stats computed successfully."},
+        500: {
+            "description": (
+                "Internal Server Error — database aggregate query failed. "
+                "The error is logged server-side."
+            )
+        },
+    },
+)
+async def get_stats(
+    db: Session = Depends(get_db),
+) -> DashboardStatsResponse:
+    """
+    Return a single-query KPI snapshot from the `sensor_logs` table.
+
+    All five aggregate values (COUNT, SUM, MAX x2, AVG) are computed in
+    one database round-trip by `crud.get_dashboard_stats()`. Results are
+    validated and precision-normalised by the `DashboardStatsResponse`
+    Pydantic schema before being returned to the client.
+
+    ### Metrics
+    - **total_readings** — Total rows in sensor_logs.
+    - **total_anomalies** — Rows where is_anomalous=True.
+    - **anomaly_rate_percentage** — (anomalies / readings) × 100, rounded to 2 d.p.
+    - **max_risk_score** — Session peak failure risk (0–1), rounded to 6 d.p.
+    - **avg_risk_score** — Baseline average risk for model drift monitoring.
+    - **latest_reading_timestamp** — ISO 8601 string of the most recent row.
+
+    Returns sentinel zeros and `"N/A"` timestamp when the database is empty.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        stats: dict = crud.get_dashboard_stats(db)
+        return DashboardStatsResponse(**stats)
+    except SQLAlchemyError as exc:
+        logger.error(
+            "Database error in get_stats | error=%s", str(exc), exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Failed to compute dashboard statistics. "
+                "The database query encountered an error. "
+                "Please retry or contact support."
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error in get_stats | error=%s", str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving statistics.",
         ) from exc
 
 
