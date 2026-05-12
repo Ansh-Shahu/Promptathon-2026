@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import carrierLogo from '../assets/carrier-logo.png'
+import carrierLogo from '../assets/carrier-logo.svg'
 
 export type NavPage = 'dashboard' | 'fleet' | 'analytics' | 'alerts' | 'maintenance' | 'digital-twin' | 'reports' | 'settings'
 
