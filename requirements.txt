@@ -1,9 +1,15 @@
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-sqlalchemy>=2.0.0
-pydantic>=2.7.0
-pydantic-settings>=2.2.0
-scikit-learn>=1.4.0
-joblib>=1.4.0
-numpy>=1.26.0
-pandas>=2.2.0
+# This repository has folder-specific dependency management.
+#
+# Install dependencies for each section separately:
+#
+# Frontend:
+#   cd frontend && npm install
+#
+# Backend:
+#   cd backend && pip install -r requirements.txt
+#
+# ML Pipeline:
+#   cd ml_pipeline && pip install -r requirements.txt
+#
+# For development, ensure Python venv is activated before installing backend/ml_pipeline deps.
+

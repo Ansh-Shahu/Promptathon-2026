@@ -1,11 +1,16 @@
 # ── Node / Frontend ───────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/*.local
 node_modules/
 dist/
 dist-ssr/
 .vite/
 *.local
 
-# ── Python / Backend ──────────────────────────────────────────────────────────
+# ── Python / Backend & ML Pipeline ────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -16,6 +21,14 @@ venv/
 .venv/
 ENV/
 pip-selfcheck.json
+backend/venv/
+backend/__pycache__/
+backend/.env.local
+backend/.env.*.local
+ml_pipeline/venv/
+ml_pipeline/__pycache__/
+ml_pipeline/.env.local
+ml_pipeline/.env.*.local
 
 # Virtual environments
 .env.local
@@ -41,9 +54,23 @@ wheels/
 *.db
 *.sqlite
 *.sqlite3
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+ml_pipeline/*.db
+ml_pipeline/*.sqlite
+ml_pipeline/*.sqlite3
 
-# ── ML Artifacts (large binaries — optional, remove this block to track model.pkl) ──
-# model.pkl
+# ── ML Artifacts (large binaries — uncomment to ignore) ───────────────────────
+# backend/model.pkl
+# ml_pipeline/model.pkl
+# *.pkl
+# Comment out above lines if you want to track trained model artifacts
+
+# ── Large Data Files ──────────────────────────────────────────────────────────
+*.csv
+ml_pipeline/**/*.csv
+# Uncomment above if CSV data files should not be tracked
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
@@ -62,6 +89,7 @@ pnpm-debug.log*
 
 # ── IDE / Editor ──────────────────────────────────────────────────────────────
 .vscode/
+.vscode-server/
 .idea/
 *.suo
 *.ntvs*
@@ -71,6 +99,7 @@ pnpm-debug.log*
 .project
 .classpath
 .settings/
+*.iml
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store

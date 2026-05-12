@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react'
 import type { AIPrediction, Compressor, Ticket } from '../data/mockData'
 import { getAIPrediction } from '../data/mockData'
 import Card3D from './Card3D'
+// Import API base URL from centralized config
+const API_BASE_URL = 'http://localhost:8000'
 
 interface Props {
   unit: Compressor | null
@@ -39,7 +41,7 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
           ambient_temp: 78.0,
         };
 
-        const response = await fetch('http://127.0.0.1:8000/api/v1/predict', {
+        const response = await fetch(`${API_BASE_URL}/api/v1/predict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(sensorPayload),
