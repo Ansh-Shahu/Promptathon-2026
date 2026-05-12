@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, ShieldAlert, User, Lock, ArrowLeft } from 'lucide-react';
-import logo from '../assets/carrier-logo.svg';
+import logo from '../assets/carrier-logo.png';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');

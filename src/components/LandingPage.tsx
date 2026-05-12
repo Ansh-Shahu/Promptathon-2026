@@ -16,7 +16,7 @@ import {
   User as UserIcon,
   LogOut
 } from 'lucide-react';
-import logo from '../assets/carrier-logo.svg';
+import logo from '../assets/carrier-logo.png';
 import ahu from '../assets/comp-ahu.jpg';
 import chiller from '../assets/comp-chiller.jpg';
 import pump from '../assets/comp-pump.jpg';
@@ -160,7 +160,7 @@ function Hero() {
               onClick={() => navigate(isAuthenticated ? '/dashboard' : '/login')}
               className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-gradient-cta px-7 text-sm font-bold uppercase tracking-wider text-primary-foreground shadow-elevated-lp transition-all hover:-translate-y-0.5 hover:brightness-110"
             >
-              {isAuthenticated ? 'Go to Dashboard' : 'Access the Ai'}
+              {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
               <ArrowRight className="h-4 w-4" />
             </button>
             {!isAuthenticated && (
@@ -282,11 +282,11 @@ function CTA() {
     <section id="performance" className="relative overflow-hidden bg-gradient-navy py-24 text-primary-foreground">
       <div className="relative mx-auto grid max-w-6xl gap-12 px-6 lg:grid-cols-2 lg:items-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white">Access Command Center</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent-glow">Get Started</p>
           <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl text-orange-500">
             Ready to Future-Proof Your HVAC Infrastructure?
           </h2>
-          <p className="mt-5 max-w-lg text-base leading-relaxed text-white/90">
+          <p className="mt-5 max-w-lg text-base leading-relaxed text-primary-foreground/75">
             Access the AI-powered command center to monitor chillers, AHUs, pumps, and compressors.
           </p>
         </div>
