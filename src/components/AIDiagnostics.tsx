@@ -24,21 +24,47 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
       setLoading(true)
 
       // Send selected dummy compressor data to backend for prediction.
-      // The backend should return the same AIPrediction shape.
+      // Mapping mock Compressor data to the backend's SensorPayload schema.
       try {
-        const response = await fetch('http://127.0.0.1:5000/predict', {
+        const sensorPayload = {
+          timestamp: new Date().toISOString(),
+          suction_temp: unit.temperature * 0.6,
+          discharge_temp: unit.temperature * 1.4,
+          suction_press: unit.pressure * 0.5,
+          discharge_press: unit.pressure * 1.5,
+          vibration_rms: unit.vibration,
+          power_draw: unit.powerDraw,
+          oil_pressure: 60.0,
+          runtime_hours: Math.floor(unit.runtime),
+          ambient_temp: 78.0,
+        };
+
+        const response = await fetch('http://127.0.0.1:8000/api/v1/predict', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ compressor: unit }),
+          body: JSON.stringify(sensorPayload),
         })
 
         if (!response.ok) {
           throw new Error(`API error ${response.status}`)
         }
 
-        const data = (await response.json()) as AIPrediction
+        const data = await response.json();
+        
+        // Map backend PredictionResponse to frontend AIPrediction shape
         if (isMounted && data) {
-          setPrediction(data)
+          const mappedPrediction: AIPrediction = {
+            compressorId: unit.id,
+            failureType: data.is_anomalous ? 'Anomalous Signature Detected' : 'Nominal Operation',
+            timeToFailure: data.is_anomalous ? 'Check Alert Details' : 'N/A',
+            confidence: Math.floor(data.failure_risk_score * 100),
+            rootCause: data.is_anomalous ? 'Multi-parameter anomaly detected by ML model.' : 'All parameters within normal operating range.',
+            suggestedAction: data.actionable_alert,
+            costEstimateRange: data.is_anomalous ? [2000, 5000] : [0, 500],
+            energySavingTip: 'Monitor vibration levels to optimize bearing life.',
+            optimalRange: { tempMin: 65, tempMax: 75, pressureMin: 125, pressureMax: 140 },
+          };
+          setPrediction(mappedPrediction)
         }
       } catch (error) {
         console.warn('Prediction API unavailable, falling back to local mock data.', error)

@@ -1,17 +1,94 @@
-# Node
-node_modules
-dist
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
 
-# Python
+# ── Python / Backend ──────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.pyo
-*.db
+.Python
+env/
+venv/
+.venv/
+ENV/
+pip-selfcheck.json
 
-# IDE
+# Virtual environments
+.env.local
+.env.*.local
+
+# Python packaging
+*.egg-info/
+*.egg
+.eggs/
+build/
+develop-eggs/
+dist/
+downloads/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.dist-info/
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── ML Artifacts (large binaries — optional, remove this block to track model.pkl) ──
+# model.pkl
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+# NOTE: backend/.env is intentionally tracked so teammates get the default config.
+# If you add real secrets, move them to backend/.env.local and add it here:
+.env.local
+.env.*.local
+*.secret
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.classpath
+.settings/
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Testing / Coverage ────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+*.cover
+
+# ── Temporary / Misc ──────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.swp
+.cache/

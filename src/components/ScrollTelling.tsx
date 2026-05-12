@@ -249,10 +249,35 @@ export default function ScrollTelling() {
                 // Shorten AHU for the timeline label
                 const shortTitle = stage.title.includes('AHU') ? 'AHU' : stage.title;
 
+                const handleDotClick = (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  if (!containerRef.current) return;
+                  const { top: containerTop, height: containerHeight } = containerRef.current.getBoundingClientRect();
+                  const viewportHeight = window.innerHeight;
+                  const scrollableHeight = containerHeight - viewportHeight;
+                  const containerAbsoluteTop = window.scrollY + containerTop;
+                  
+                  // Milestones are 0, 1/3, 2/3, 1
+                  const targetProgress = i / 3;
+                  const targetScroll = containerAbsoluteTop + targetProgress * scrollableHeight;
+                  
+                  (window as any).isNavigating = true;
+                  window.scrollTo({ top: targetScroll, behavior: 'smooth' });
+                  
+                  setTimeout(() => {
+                    (window as any).isNavigating = false;
+                  }, 1000);
+                };
+
                 return (
-                  <div key={i} className="relative flex flex-col items-center gap-2">
+                  <button 
+                    key={i} 
+                    onClick={handleDotClick}
+                    className="relative flex flex-col items-center gap-2 group cursor-pointer z-[100] outline-none bg-transparent border-none p-4 -m-4 pointer-events-auto"
+                    aria-label={`Go to ${stage.title}`}
+                  >
                     {/* Circle Indicator */}
-                    <div className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 bg-white
+                    <div className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 bg-white group-hover:scale-110 pointer-events-none
                       ${isActive ? 'border-[#f97316] shadow-[0_0_15px_rgba(249,115,22,0.8)]' : 
                         isPassed ? 'border-[#f97316]' : 'border-slate-300'}
                     `}>
@@ -260,16 +285,18 @@ export default function ScrollTelling() {
                         <div className="h-3 w-3 rounded-full bg-[#f97316]" />
                       ) : isPassed ? (
                         <div className="h-2 w-2 rounded-full bg-[#f97316]" />
-                      ) : null}
+                      ) : (
+                        <div className="h-2 w-2 rounded-full bg-slate-200 group-hover:bg-[#f97316]/30 transition-colors" />
+                      )}
                     </div>
 
                     {/* Label Below */}
-                    <div className={`transition-all duration-300 text-center text-xs font-bold uppercase tracking-widest whitespace-nowrap
+                    <div className={`transition-all duration-300 text-center text-xs font-bold uppercase tracking-widest whitespace-nowrap group-hover:text-[#f97316] pointer-events-none
                       ${isActive ? 'text-[#f97316]' : 'text-slate-800'}
                     `}>
                       {shortTitle}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
