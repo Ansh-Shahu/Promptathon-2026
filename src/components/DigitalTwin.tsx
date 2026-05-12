@@ -10,6 +10,9 @@ interface Props {
 
 export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
   const [loadMultiplier, setLoadMultiplier] = useState(1.0)
+  const [ambientTempOffset, setAmbientTempOffset] = useState(0)
+  const [pressureOffset, setPressureOffset] = useState(0)
+  const [vibrationOffset, setVibrationOffset] = useState(0)
   const [simulating, setSimulating] = useState(false)
   const [simResult, setSimResult] = useState<null | {
     temp: number; vibration: number; pressure: number; efficiency: number; risk: string; recommendation: string
@@ -36,27 +39,27 @@ export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
   const runSimulation = () => {
     setSimulating(true)
     setTimeout(() => {
-      const tempIncrease = (loadMultiplier - 1) * 15
-      const vibIncrease = (loadMultiplier - 1) * 2.5
-      const pressureDrop = (loadMultiplier - 1) * 12
-      const effDrop = (loadMultiplier - 1) * 8
+      const tempIncrease = (loadMultiplier - 1) * 15 + ambientTempOffset
+      const vibIncrease = (loadMultiplier - 1) * 2.5 + vibrationOffset
+      const pressureDrop = (loadMultiplier - 1) * 12 - pressureOffset
+      const effDrop = (loadMultiplier - 1) * 8 + (Math.abs(ambientTempOffset) * 0.3) + (Math.abs(vibrationOffset) * 4) + (Math.abs(pressureOffset) * 0.2)
 
       const simTemp = Math.round(unit.temperature + tempIncrease)
       const simVib = +(unit.vibration + vibIncrease).toFixed(1)
       const simPressure = Math.round(unit.pressure - pressureDrop)
-      const simEff = Math.max(60, +(unit.efficiency - effDrop).toFixed(1))
+      const simEff = Math.max(40, Math.min(100, +(unit.efficiency - effDrop).toFixed(1)))
 
       let risk = 'Low'
-      let recommendation = 'System can handle this load. Continue monitoring.'
-      if (simTemp > 85 || simVib > 4.0) {
+      let recommendation = 'System can handle these parameters. Continue monitoring.'
+      if (simTemp > 85 || simVib > 4.0 || simPressure < 100) {
         risk = 'Critical'
-        recommendation = `Load increase to ${(loadMultiplier * 100).toFixed(0)}% would cause critical conditions within 24 hours. NOT recommended. Reduce load to below 110%.`
-      } else if (simTemp > 78 || simVib > 3.0) {
+        recommendation = `These simulated conditions would cause critical failure within 24 hours. NOT recommended. Reduce load and normalize environmental factors.`
+      } else if (simTemp > 78 || simVib > 3.0 || simPressure < 110) {
         risk = 'High'
-        recommendation = `Load at ${(loadMultiplier * 100).toFixed(0)}% increases failure risk significantly. Limit to 4-hour bursts with cooldown periods.`
-      } else if (simTemp > 74) {
+        recommendation = `These parameters increase failure risk significantly. Limit to 4-hour bursts with extended cooldown periods.`
+      } else if (simTemp > 74 || simVib > 2.0) {
         risk = 'Moderate'
-        recommendation = `Load at ${(loadMultiplier * 100).toFixed(0)}% is sustainable short-term. Schedule inspection within 48 hours.`
+        recommendation = `This simulation is sustainable short-term. Schedule inspection within 48 hours.`
       }
 
       setSimResult({ temp: simTemp, vibration: simVib, pressure: simPressure, efficiency: simEff, risk, recommendation })
@@ -127,24 +130,47 @@ export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
               <i className="fa-solid fa-flask text-accent-purple"></i>
               What-If Simulation
             </h4>
-            <div className="flex items-center gap-4 mb-4">
-              <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Load Adjustment:</label>
-              <input type="range" min="0.8" max="1.5" step="0.05" value={loadMultiplier}
-                onChange={e => { setLoadMultiplier(parseFloat(e.target.value)); setSimResult(null) }}
-                className="flex-1 accent-primary-400"
-              />
-              <span className="text-sm font-bold min-w-[50px] text-right" style={{ color: loadMultiplier > 1.2 ? 'var(--color-status-critical)' : 'var(--color-primary-400)' }}>
-                {(loadMultiplier * 100).toFixed(0)}%
-              </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold uppercase tracking-wider flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                  <span><i className="fa-solid fa-server mr-1"></i> Base System Load</span>
+                  <span style={{ color: loadMultiplier > 1.2 ? 'var(--color-status-critical)' : 'var(--color-primary-400)' }}>{(loadMultiplier * 100).toFixed(0)}%</span>
+                </label>
+                <input type="range" min="0.8" max="1.5" step="0.05" value={loadMultiplier} onChange={e => { setLoadMultiplier(parseFloat(e.target.value)); setSimResult(null) }} className="accent-primary-400" />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold uppercase tracking-wider flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                  <span><i className="fa-solid fa-temperature-half mr-1"></i> Ambient Temp Offset</span>
+                  <span style={{ color: ambientTempOffset > 0 ? 'var(--color-status-warn)' : 'var(--color-primary-400)' }}>{ambientTempOffset > 0 ? '+' : ''}{ambientTempOffset}°F</span>
+                </label>
+                <input type="range" min="-20" max="40" step="1" value={ambientTempOffset} onChange={e => { setAmbientTempOffset(parseInt(e.target.value)); setSimResult(null) }} className="accent-primary-400" />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold uppercase tracking-wider flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                  <span><i className="fa-solid fa-gauge mr-1"></i> Pressure Override</span>
+                  <span style={{ color: pressureOffset !== 0 ? 'var(--color-status-warn)' : 'var(--color-primary-400)' }}>{pressureOffset > 0 ? '+' : ''}{pressureOffset} PSI</span>
+                </label>
+                <input type="range" min="-30" max="30" step="1" value={pressureOffset} onChange={e => { setPressureOffset(parseInt(e.target.value)); setSimResult(null) }} className="accent-primary-400" />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold uppercase tracking-wider flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                  <span><i className="fa-solid fa-wave-square mr-1"></i> Induced Vibration</span>
+                  <span style={{ color: vibrationOffset > 0 ? 'var(--color-status-warn)' : 'var(--color-primary-400)' }}>+{vibrationOffset.toFixed(1)} mm/s</span>
+                </label>
+                <input type="range" min="0" max="5" step="0.1" value={vibrationOffset} onChange={e => { setVibrationOffset(parseFloat(e.target.value)); setSimResult(null) }} className="accent-primary-400" />
+              </div>
             </div>
             <button onClick={runSimulation} disabled={simulating}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm bg-gradient-to-r from-accent-purple to-accent-blue hover:shadow-[0_0_24px_rgba(167,139,250,0.35)] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer disabled:opacity-50"
-              style={{ color: '#fff' }}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm bg-emerald-500 hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer disabled:opacity-50"
+              style={{ color: '#ffffff' }}
             >
               {simulating ? (
-                <><i className="fa-solid fa-spinner fa-spin"></i> Running Simulation...</>
+                <><i className="fa-solid fa-spinner fa-spin"></i> Running Multi-Variable Simulation...</>
               ) : (
-                <><i className="fa-solid fa-play"></i> Simulate Load at {(loadMultiplier * 100).toFixed(0)}%</>
+                <><i className="fa-solid fa-play"></i> Run Custom Simulation</>
               )}
             </button>
 

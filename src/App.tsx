@@ -86,7 +86,7 @@ function DashboardContent() {
   const unacknowledgedCount = alerts.filter(a => !a.acknowledged).length
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-app)' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: 'transparent' }}>
       {/* Sidebar */}
       <Sidebar activePage={activePage} onNavigate={setActivePage} alertCount={unacknowledgedCount} />
 

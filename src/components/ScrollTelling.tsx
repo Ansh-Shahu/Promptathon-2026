@@ -120,10 +120,11 @@ export default function ScrollTelling() {
         window.scrollTo({ top: containerAbsoluteTop + progress * scrollableHeight, behavior: 'auto' });
       } else {
         // Check if we crossed a milestone (1/3 or 2/3) where a transformation completes
-        const milestones = [1/3, 2/3];
+        const milestones = [0.333, 0.666, 0.99];
         let crossedMilestone = -1;
 
         for (const m of milestones) {
+          // Check if we crossed the threshold in either direction
           if (
             (prevProgress.current < m && progress >= m) || 
             (prevProgress.current > m && progress <= m)
@@ -136,16 +137,15 @@ export default function ScrollTelling() {
         if (crossedMilestone !== -1 && !(window as any).isNavigating) {
           isLocked.current = true;
           lockedProgress.current = crossedMilestone;
-          progress = crossedMilestone; // Snap progress exactly to the static frame
+          progress = crossedMilestone; 
           
-          // Physically snap the scroll position to align with the milestone
           const targetScroll = containerAbsoluteTop + crossedMilestone * scrollableHeight;
           window.scrollTo({ top: targetScroll, behavior: 'auto' });
 
           setTimeout(() => {
             isLocked.current = false;
             lockedProgress.current = null;
-          }, 2000);
+          }, 500);
         }
       }
 
@@ -229,40 +229,50 @@ export default function ScrollTelling() {
             ))}
           </div>
 
-          {/* Right Text - Vertical Cards */}
-          <div className="w-[280px] lg:w-[320px] shrink-0">
-            {STAGES.map((stage, i) => (
+          {/* Right Timeline Component Nav */}
+          <div className="absolute right-6 md:right-12 lg:right-20 top-1/2 -translate-y-1/2 z-20">
+            <div className="relative flex flex-col gap-[64px] items-center">
+              
+              {/* Background Line */}
+              <div className="absolute left-1/2 -translate-x-1/2 top-[12px] bottom-[32px] w-[2px] bg-slate-300 -z-10" />
+              
+              {/* Active Orange Line */}
               <div 
-                key={i} 
-                className={`transition-all duration-700 absolute top-1/2 -translate-y-1/2 right-6 md:right-12 lg:right-20 w-[280px] lg:w-[320px] ${currentStage === i ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8'}`}
-              >
-                <div className="bg-white/90 border border-slate-200 backdrop-blur-xl p-6 rounded-2xl shadow-xl">
-                  <h4 className="text-xs font-bold text-[#020617] uppercase tracking-[0.2em] mb-5 flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-primary animate-pulse-glow" />
-                    Diagnostics
-                  </h4>
-                  
-                  {/* Vertical List for Parameters */}
-                  <div className="flex flex-col gap-4">
-                    {stage.right.map((line, idx) => {
-                      const Icon = ICONS[idx % ICONS.length];
-                      return (
-                        <div key={idx} className="bg-slate-50 border border-slate-100 p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow flex items-center gap-4">
-                          <div className="bg-white p-2 rounded-lg shadow-sm border border-slate-100 shrink-0 text-primary">
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Monitoring</span>
-                            <span className="text-sm font-bold text-[#020617] leading-tight block">{line}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                className="absolute left-1/2 -translate-x-1/2 top-[12px] w-[2px] bg-primary transition-all duration-700 ease-in-out -z-10"
+                style={{ height: `calc(${currentStage} * 33.33%)` }}
+              />
+
+              {STAGES.map((stage, i) => {
+                const isActive = currentStage === i;
+                const isPassed = currentStage > i;
+                
+                // Shorten AHU for the timeline label
+                const shortTitle = stage.title.includes('AHU') ? 'AHU' : stage.title;
+
+                return (
+                  <div key={i} className="relative flex flex-col items-center gap-2">
+                    {/* Circle Indicator */}
+                    <div className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 bg-white
+                      ${isActive ? 'border-[#f97316] shadow-[0_0_15px_rgba(249,115,22,0.8)]' : 
+                        isPassed ? 'border-[#f97316]' : 'border-slate-300'}
+                    `}>
+                      {isActive ? (
+                        <div className="h-3 w-3 rounded-full bg-[#f97316]" />
+                      ) : isPassed ? (
+                        <div className="h-2 w-2 rounded-full bg-[#f97316]" />
+                      ) : null}
+                    </div>
+
+                    {/* Label Below */}
+                    <div className={`transition-all duration-300 text-center text-xs font-bold uppercase tracking-widest whitespace-nowrap
+                      ${isActive ? 'text-[#f97316]' : 'text-slate-800'}
+                    `}>
+                      {shortTitle}
+                    </div>
                   </div>
-                  
-                </div>
-              </div>
-            ))}
+                );
+              })}
+            </div>
           </div>
         </div>
 

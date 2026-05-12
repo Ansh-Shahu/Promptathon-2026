@@ -57,51 +57,69 @@
 
 /* ── CSS Variables for Theme ─────────────────────────────── */
 :root {
-  /* Light theme - Refined Cream with Heavy Glassmorphism & 3D Effect */
-  --bg-app: #f8f1e5;
-  --bg-sidebar: rgba(255, 255, 255, 0.85);
-  --bg-card: rgba(255, 255, 255, 0.7);
-  --bg-card-hover: rgba(255, 255, 255, 0.9);
-  --bg-elevated: rgba(255, 255, 255, 0.95);
-  --bg-input: rgba(255, 255, 255, 0.6);
-  --border-subtle: rgba(255, 255, 255, 0.5);
-  --border-default: rgba(255, 255, 255, 0.7);
-  --border-strong: rgba(255, 255, 255, 0.9);
+  /* Light theme - Premium Matte Enterprise */
+  --bg-app: #f4f6f9; /* Soft cool gray/off-white base */
+  --bg-sidebar: rgba(255, 255, 255, 0.6);
+  --bg-card: rgba(255, 255, 255, 0.85); /* Slightly translucent */
+  --bg-card-hover: #ffffff;
+  --bg-elevated: rgba(255, 255, 255, 0.98);
+  --bg-input: rgba(255, 255, 255, 0.7);
+  --border-subtle: rgba(0, 0, 0, 0.03);
+  --border-default: rgba(0, 0, 0, 0.05);
+  --border-strong: rgba(0, 0, 0, 0.08);
   --text-primary: #1e293b;
   --text-secondary: #475569;
   --text-tertiary: #64748b;
   --text-muted: #94a3b8;
-  --text-on-primary: #0b0f19;
-  --shadow-card: 0 4px 16px rgba(148, 163, 184, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-  --shadow-elevated: 0 12px 32px rgba(148, 163, 184, 0.15), 0 4px 12px rgba(148, 163, 184, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.8);
-  --shadow-glow: 0 0 24px rgba(45, 212, 191, 0.15);
-  --chart-grid: rgba(0, 0, 0, 0.04);
+  --text-on-primary: #ffffff;
+  
+  /* Delicate airy shadows with pristine white inner borders */
+  --shadow-card: 0 4px 12px -4px rgba(15, 23, 42, 0.04), 0 2px 6px -2px rgba(15, 23, 42, 0.02), inset 0 1px 0 0 rgba(255, 255, 255, 1);
+  --shadow-elevated: 0 16px 32px -8px rgba(15, 23, 42, 0.06), 0 8px 16px -4px rgba(15, 23, 42, 0.03), inset 0 1px 0 0 rgba(255, 255, 255, 1);
+  --shadow-glow: 0 0 30px rgba(45, 212, 191, 0.08);
+  
+  --chart-grid: rgba(0, 0, 0, 0.03);
   --scrollbar-track: transparent;
-  --scrollbar-thumb: rgba(148, 163, 184, 0.3);
+  --scrollbar-thumb: rgba(15, 23, 42, 0.15);
+
+  /* Light Ambient Gradients - Extra Strong & Alive */
+  --ambient-grad-1: radial-gradient(circle at 10% 20%, rgba(13, 148, 136, 0.25), transparent 60%); /* Teal */
+  --ambient-grad-2: radial-gradient(circle at 85% 20%, rgba(56, 189, 248, 0.30), transparent 50%); /* Cyan */
+  --ambient-grad-3: radial-gradient(circle at 50% 85%, rgba(59, 130, 246, 0.25), transparent 60%); /* Blue */
+  --ambient-grad-4: radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.20), transparent 50%); /* Violet */
 }
 
 [data-theme="dark"] {
-  /* Dark theme - Lighter Professional Grey */
-  --bg-app: #1a1c23;
-  --bg-sidebar: #22262f;
-  --bg-card: rgba(34, 38, 47, 0.7);
-  --bg-card-hover: rgba(45, 50, 60, 0.6);
-  --bg-elevated: #2a2f3a;
-  --bg-input: #2a2f3a;
-  --border-subtle: rgba(255, 255, 255, 0.04);
+  /* Dark theme - Industrial AI Command Center */
+  --bg-app: #030712; /* Deep navy-black base */
+  --bg-sidebar: rgba(10, 15, 26, 0.4);
+  --bg-card: rgba(10, 15, 26, 0.5);
+  --bg-card-hover: rgba(20, 28, 43, 0.6);
+  --bg-elevated: rgba(15, 23, 42, 0.8);
+  --bg-input: rgba(15, 23, 42, 0.6);
+  --border-subtle: rgba(255, 255, 255, 0.05);
   --border-default: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.15);
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --text-tertiary: #64748b;
   --text-muted: #4b5563;
   --text-on-primary: #0b0f19;
-  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
-  --shadow-elevated: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
-  --shadow-glow: 0 0 40px rgba(45, 212, 191, 0.12);
-  --chart-grid: #2a2f3a;
-  --scrollbar-track: #1a1c23;
-  --scrollbar-thumb: #334155;
+  
+  /* Soft floating shadows with edge highlights */
+  --shadow-card: 0 8px 16px -4px rgba(0, 0, 0, 0.5), 0 4px 8px -2px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255,255,255,0.06);
+  --shadow-elevated: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 10px 10px -5px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255,255,255,0.12);
+  --shadow-glow: 0 0 35px rgba(45, 212, 191, 0.12);
+  
+  --chart-grid: rgba(255, 255, 255, 0.03);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(51, 65, 85, 0.8);
+
+  /* Dark Ambient Gradients */
+  --ambient-grad-1: radial-gradient(circle at 15% 25%, rgba(13, 148, 136, 0.1), transparent 50%); /* Teal */
+  --ambient-grad-2: radial-gradient(circle at 85% 30%, rgba(56, 189, 248, 0.08), transparent 60%); /* Cyan */
+  --ambient-grad-3: radial-gradient(circle at 50% 80%, rgba(30, 58, 138, 0.15), transparent 70%); /* Deep blue */
+  --ambient-grad-4: radial-gradient(circle at 90% 85%, rgba(139, 92, 246, 0.06), transparent 50%); /* Very subtle violet */
 }
 
 /* Landing Page Theme Variables */
@@ -171,6 +189,56 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 0.3s ease, color 0.3s ease;
+  position: relative;
+  z-index: 0;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -50%;
+  z-index: -2;
+  background: 
+    var(--ambient-grad-1),
+    var(--ambient-grad-2),
+    var(--ambient-grad-3),
+    var(--ambient-grad-4);
+  background-color: var(--bg-app);
+  animation: ambient-drift 35s ease-in-out infinite;
+  opacity: 1; /* Enabled globally */
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.04) 130%); /* Soft light vignette */
+  transition: background 0.5s ease;
+}
+
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.015; /* Barely visible matte texture */
+  mix-blend-mode: multiply;
+  transition: opacity 0.5s ease, mix-blend-mode 0.5s ease;
+}
+
+[data-theme="dark"] body::after {
+  background: radial-gradient(circle at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.5) 130%); /* Deep dark vignette */
+}
+
+[data-theme="dark"] #root::before {
+  opacity: 0.025; /* Slightly stronger grain */
+  mix-blend-mode: overlay;
 }
 
 /* ── Scrollbar ───────────────────────────────────────────── */
@@ -238,6 +306,15 @@ body {
   animation: count-up 0.5s ease-out forwards;
 }
 
+@keyframes ambient-drift {
+  0% { transform: translate(0%, 0%) rotate(0deg) scale(1); }
+  20% { transform: translate(12%, -8%) rotate(3deg) scale(1.1); }
+  40% { transform: translate(18%, 12%) rotate(-2deg) scale(0.9); }
+  60% { transform: translate(-12%, 15%) rotate(4deg) scale(1.15); }
+  80% { transform: translate(-18%, -10%) rotate(-3deg) scale(0.95); }
+  100% { transform: translate(0%, 0%) rotate(0deg) scale(1); }
+}
+
 /* Landing Page Utilities */
 .bg-gradient-hero { background: var(--gradient-hero); }
 .bg-gradient-cta { background: var(--gradient-cta); }
@@ -274,8 +351,6 @@ body {
 
 .glass-card, .glass-card-static {
   background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-default);
   border-radius: 1.25rem;
   box-shadow: 
@@ -283,7 +358,7 @@ body {
     inset -1px -1px 1px rgba(0, 0, 0, 0.1),
     0 10px 30px -10px rgba(0, 0, 0, 0.3);
   color: var(--text-primary);
-  transition: transform 0.1s ease-out, box-shadow 0.3s ease;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, backdrop-filter 0.2s ease;
   overflow: visible; /* Allow 3D overflow */
   transform-style: preserve-3d;
   perspective: 1000px;
@@ -291,17 +366,24 @@ body {
 
 [data-theme="dark"] .glass-card,
 [data-theme="dark"] .glass-card-static {
-  box-shadow: 
-    inset 1px 1px 1px rgba(255, 255, 255, 0.05),
-    inset -1px -1px 1px rgba(0, 0, 0, 0.5),
-    0 20px 40px -20px rgba(0, 0, 0, 0.6);
+  background: var(--bg-card);
+  backdrop-filter: none; /* Removed heavy glassmorphism for a clean technical look */
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--shadow-card);
 }
 
 .glass-card:hover {
-  box-shadow: 
-    inset 1px 1px 1px rgba(255, 255, 255, 0.5),
-    0 30px 60px -20px rgba(0, 0, 0, 0.4),
-    var(--shadow-glow);
+  background: var(--bg-card-hover);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-elevated);
+}
+
+[data-theme="dark"] .glass-card:hover {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-elevated);
+  border-color: var(--border-strong);
 }
 
 /* 3D Depth Utilities */
