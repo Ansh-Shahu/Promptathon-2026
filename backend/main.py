@@ -247,14 +247,48 @@ app.add_middleware(
 #  HELPER — MOCK PREDICTION ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _mock_predict(payload: SensorPayload) -> PredictionResponse:
+def _build_feature_vector(payload: SensorPayload) -> list[list[float]]:
     """
-    Apply ISO 10816 vibration threshold heuristic to generate a mocked
-    prediction response.
+    Transform a validated SensorPayload into a 2D feature array suitable
+    for scikit-learn's predict / predict_proba interface.
 
-    This function isolates all mock logic so it can be replaced in a single
-    location when the real model is wired in. The caller (the route handler)
-    does not need to change.
+    Column order MUST match the order used during training in
+    ml_pipeline/train_model.py:
+        suction_temp, discharge_temp, suction_press, discharge_press,
+        vibration_rms, power_draw, oil_pressure, runtime_hours, ambient_temp
+
+    Parameters
+    ----------
+    payload : SensorPayload
+        Validated incoming sensor reading.
+
+    Returns
+    -------
+    list[list[float]]
+        A 1×9 nested list representing a single sample feature vector.
+    """
+    return [[
+        payload.suction_temp,
+        payload.discharge_temp,
+        payload.suction_press,
+        payload.discharge_press,
+        payload.vibration_rms,
+        payload.power_draw,
+        payload.oil_pressure,
+        float(payload.runtime_hours),
+        payload.ambient_temp,
+    ]]
+
+
+def _predict(payload: SensorPayload) -> PredictionResponse:
+    """
+    Generate a failure risk prediction using the trained Random Forest model.
+
+    When `app.state.model` is loaded (model.pkl exists), this function builds
+    a feature vector from the sensor payload and calls `predict_proba()` to
+    obtain a calibrated probability of imminent failure. When the model is not
+    available (mock mode), it falls back to the ISO 10816 vibration threshold
+    heuristic to keep the API functional for frontend development.
 
     Parameters
     ----------
@@ -264,56 +298,71 @@ def _mock_predict(payload: SensorPayload) -> PredictionResponse:
     Returns
     -------
     PredictionResponse
-        Fully validated prediction response. Pydantic runs all response
-        validators (precision normalisation, alert content enforcement)
-        during instantiation — any logic bug here surfaces immediately.
-
-    Raises
-    ------
-    ValueError
-        If PredictionResponse instantiation fails its own validators
-        (e.g., whitespace-only alert). Propagates to the route handler's
-        except block and becomes an HTTP 500.
+        Fully validated prediction response with risk score, anomaly flag,
+        and actionable alert text.
     """
     vibration: float = payload.vibration_rms
+    model = app.state.model
 
-    # ── REPLACE WITH ML INFERENCE ─────────────────────────────────────────────
-    # feature_vector = build_feature_vector(payload)   # your preprocessing fn
-    # risk_score: float = app.state.model.predict_proba(feature_vector)[0][1]
-    # is_anomalous: bool = risk_score >= 0.70
-    # ─────────────────────────────────────────────────────────────────────────
+    if model is not None:
+        # ── REAL ML INFERENCE ─────────────────────────────────────────────────
+        feature_vector = _build_feature_vector(payload)
+        risk_score: float = float(model.predict_proba(feature_vector)[0][1])
+        is_anomalous: bool = risk_score >= 0.70
 
-    if vibration > ISO_10816_VIBRATION_THRESHOLD_MMS:
-        # ── Anomalous branch ──────────────────────────────────────────────────
-        risk_score: float = random.uniform(
-            ANOMALOUS_RISK_SCORE_MIN,
-            ANOMALOUS_RISK_SCORE_MAX,
+        logger.info(
+            "ML inference complete | risk_score=%.6f | is_anomalous=%s",
+            risk_score, is_anomalous,
         )
-        is_anomalous: bool = True
-        actionable_alert: str = (
-            f"⚠️ HIGH RISK ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
-            f"exceeds the ISO 10816 threshold of "
-            f"{ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s. "
-            "Immediate bearing inspection recommended. "
-            "Schedule maintenance within 72 hours to prevent unplanned downtime."
-        )
+
+        if is_anomalous:
+            actionable_alert: str = (
+                f"⚠️ HIGH RISK ({risk_score:.0%}): ML model detected failure "
+                f"probability of {risk_score:.4f}. Vibration RMS at "
+                f"{vibration:.2f} mm/s. "
+                "Immediate bearing inspection recommended. "
+                "Schedule maintenance within 72 hours to prevent unplanned downtime."
+            )
+        else:
+            actionable_alert = (
+                f"✅ NOMINAL ({risk_score:.0%}): ML model assessed failure "
+                f"probability at {risk_score:.4f}. All sensor parameters within "
+                "acceptable operating range. "
+                "No maintenance action required. Continue scheduled monitoring."
+            )
     else:
-        # ── Nominal branch ────────────────────────────────────────────────────
-        risk_score = random.uniform(
-            NOMINAL_RISK_SCORE_MIN,
-            NOMINAL_RISK_SCORE_MAX,
-        )
-        is_anomalous = False
-        actionable_alert = (
-            f"✅ NOMINAL ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
-            f"is within the ISO 10816 healthy range "
-            f"(< {ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s). "
-            "No maintenance action required. Continue scheduled monitoring."
-        )
+        # ── FALLBACK: ISO 10816 MOCK MODE ─────────────────────────────────────
+        logger.warning("Model not loaded — using mock heuristic for prediction.")
+
+        if vibration > ISO_10816_VIBRATION_THRESHOLD_MMS:
+            risk_score = random.uniform(
+                ANOMALOUS_RISK_SCORE_MIN,
+                ANOMALOUS_RISK_SCORE_MAX,
+            )
+            is_anomalous = True
+            actionable_alert = (
+                f"⚠️ HIGH RISK ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
+                f"exceeds the ISO 10816 threshold of "
+                f"{ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s. "
+                "Immediate bearing inspection recommended. "
+                "Schedule maintenance within 72 hours to prevent unplanned downtime."
+            )
+        else:
+            risk_score = random.uniform(
+                NOMINAL_RISK_SCORE_MIN,
+                NOMINAL_RISK_SCORE_MAX,
+            )
+            is_anomalous = False
+            actionable_alert = (
+                f"✅ NOMINAL ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
+                f"is within the ISO 10816 healthy range "
+                f"(< {ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s). "
+                "No maintenance action required. Continue scheduled monitoring."
+            )
 
     return PredictionResponse(
         timestamp=payload.timestamp,
-        failure_risk_score=risk_score,       # precision-normalised by field_validator
+        failure_risk_score=risk_score,
         is_anomalous=is_anomalous,
         actionable_alert=actionable_alert,
     )
@@ -460,7 +509,7 @@ async def predict_failure_risk(
             payload.vibration_rms,
         )
 
-        response: PredictionResponse = _mock_predict(payload)
+        response: PredictionResponse = _predict(payload)
 
         logger.info(
             "Prediction response generated | is_anomalous=%s | risk_score=%.6f",

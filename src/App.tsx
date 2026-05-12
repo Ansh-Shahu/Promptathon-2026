@@ -17,7 +17,7 @@ import DigitalTwin from './components/DigitalTwin'
 import MaintenanceScheduler from './components/MaintenanceScheduler'
 import ReportsPanel from './components/ReportsPanel'
 import {
-  compressors,
+  compressors as staticCompressors,
   generateSymptoms,
   generateAlerts,
   generateTrendData,
@@ -25,6 +25,7 @@ import {
   generateTicketHistory,
   generateMaintenanceSchedule,
   generateWeeklyReports,
+  type Compressor,
   type DetectedSymptom,
   type AlertEntry,
   type TrendDataPoint,
@@ -32,8 +33,139 @@ import {
   type MaintenanceEvent,
   type WeeklyReport,
 } from './data/mockData'
+import {
+  fetchHistory,
+  fetchStats,
+  type PredictionHistoryEntry,
+  type DashboardStats,
+} from './services/api'
 
 const REFRESH_INTERVAL = 30 // seconds
+
+// ── Helpers: Map backend data to frontend component structures ───────────────
+
+/**
+ * Convert backend history entries to the TrendDataPoint format used by SensorChart.
+ * Takes the last N entries and maps timestamp + sensor readings.
+ */
+function historyToTrendData(history: PredictionHistoryEntry[]): TrendDataPoint[] {
+  // History arrives newest-first; reverse for chronological chart order
+  const chronological = [...history].reverse()
+  return chronological.map(entry => {
+    const d = new Date(entry.timestamp)
+    return {
+      time: d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+      vibration: +entry.vibration_rms.toFixed(2),
+      pressure: +entry.discharge_press.toFixed(1),
+      temperature: +entry.discharge_temp.toFixed(1),
+      power: +entry.power_draw.toFixed(1),
+    }
+  })
+}
+
+/**
+ * Convert backend history entries to AlertEntry format.
+ * Anomalous readings become alerts; nominal readings are skipped.
+ */
+function historyToAlerts(history: PredictionHistoryEntry[]): AlertEntry[] {
+  return history
+    .filter(entry => entry.is_anomalous)
+    .slice(0, 10) // Show latest 10 anomaly alerts
+    .map((entry, idx) => ({
+      id: `API-ALT-${entry.id}`,
+      compressorId: 'CMP-003', // Associated with the primary monitored unit
+      type: 'predictive' as const,
+      message: entry.actionable_alert,
+      timestamp: entry.timestamp,
+      severity: entry.failure_risk_score >= 0.90 ? 'Critical' as const : 'Warning' as const,
+      acknowledged: false,
+    }))
+}
+
+/**
+ * Convert backend history entries to DetectedSymptom format.
+ * Derives symptoms from sensor readings that exceed known thresholds.
+ */
+function historyToSymptoms(history: PredictionHistoryEntry[]): DetectedSymptom[] {
+  const symptoms: DetectedSymptom[] = []
+  const anomalous = history.filter(e => e.is_anomalous).slice(0, 6)
+
+  anomalous.forEach((entry, idx) => {
+    if (entry.vibration_rms > 4.5) {
+      symptoms.push({
+        id: `API-SYM-V-${entry.id}`,
+        compressorId: 'CMP-003',
+        symptom: `Abnormal vibration detected: ${entry.vibration_rms.toFixed(2)} mm/s RMS`,
+        severity: 'Critical',
+        detectedAt: entry.timestamp,
+        confidence: Math.min(99, Math.round(entry.failure_risk_score * 100)),
+        sensor: 'Accelerometer',
+      })
+    }
+    if (entry.discharge_temp > 120) {
+      symptoms.push({
+        id: `API-SYM-T-${entry.id}`,
+        compressorId: 'CMP-003',
+        symptom: `Discharge temperature elevated: ${entry.discharge_temp.toFixed(1)}°F`,
+        severity: entry.discharge_temp > 150 ? 'Critical' : 'Warning',
+        detectedAt: entry.timestamp,
+        confidence: Math.min(95, Math.round(entry.failure_risk_score * 100)),
+        sensor: 'RTD Sensor',
+      })
+    }
+    if (entry.power_draw > 360) {
+      symptoms.push({
+        id: `API-SYM-P-${entry.id}`,
+        compressorId: 'CMP-003',
+        symptom: `Power draw exceeding baseline: ${entry.power_draw.toFixed(1)} kW`,
+        severity: 'Warning',
+        detectedAt: entry.timestamp,
+        confidence: Math.min(90, Math.round(entry.failure_risk_score * 100)),
+        sensor: 'Power Meter',
+      })
+    }
+  })
+
+  return symptoms.slice(0, 6) // Cap at 6 symptoms
+}
+
+/**
+ * Build dynamic compressor data by overlaying the latest backend readings
+ * onto the static fleet definitions.
+ */
+function buildDynamicCompressors(
+  history: PredictionHistoryEntry[],
+  stats: DashboardStats | null,
+): Compressor[] {
+  if (history.length === 0) return staticCompressors
+
+  // Get the latest reading for the primary monitored unit
+  const latest = history[0] // newest first
+
+  return staticCompressors.map(c => {
+    if (c.id === 'CMP-003') {
+      // Map the latest ML-scored reading onto the "critical" unit
+      const riskScore = latest.failure_risk_score
+      let status: Compressor['status'] = 'Normal'
+      if (riskScore >= 0.90) status = 'Critical'
+      else if (riskScore >= 0.70) status = 'Warning'
+      else if (riskScore >= 0.40) status = 'Damaged'
+
+      return {
+        ...c,
+        temperature: Math.round(latest.discharge_temp),
+        vibration: +latest.vibration_rms.toFixed(1),
+        pressure: Math.round(latest.discharge_press),
+        powerDraw: +latest.power_draw.toFixed(1),
+        runtime: latest.runtime_hours,
+        efficiency: riskScore < 0.3 ? 96 : riskScore < 0.7 ? 88 : 78,
+        status,
+      }
+    }
+    return c
+  })
+}
+
 
 function DashboardContent() {
   const [activePage, setActivePage] = useState<NavPage>('dashboard')
@@ -42,7 +174,13 @@ function DashboardContent() {
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
-  // Live data state
+  // Backend connectivity state
+  const [backendAvailable, setBackendAvailable] = useState(false)
+  const [mlModelLoaded, setMlModelLoaded] = useState(false)
+  const [apiHistory, setApiHistory] = useState<PredictionHistoryEntry[]>([])
+  const [apiStats, setApiStats] = useState<DashboardStats | null>(null)
+
+  // Live data state — initialized with static mock data, overridden by API
   const [symptoms, setSymptoms] = useState<DetectedSymptom[]>(generateSymptoms)
   const [alerts, setAlerts] = useState<AlertEntry[]>(generateAlerts)
   const [trendData, setTrendData] = useState<TrendDataPoint[]>(() => generateTrendData(24))
@@ -50,17 +188,51 @@ function DashboardContent() {
   const [maintenanceEvents] = useState<MaintenanceEvent[]>(generateMaintenanceSchedule)
   const [weeklyReports] = useState<WeeklyReport[]>(generateWeeklyReports)
 
+  // Dynamic compressors — updated from backend when available
+  const [compressors, setCompressors] = useState<Compressor[]>(staticCompressors)
+
   const fleetStats = getFleetStats(compressors)
   const selectedCompressor = compressors.find(c => c.id === selectedUnit) || null
 
+  // ── Fetch live data from backend ──────────────────────────────────────────
+  const fetchBackendData = useCallback(async () => {
+    try {
+      // Fetch history and stats in parallel
+      const [historyData, statsData] = await Promise.all([
+        fetchHistory(0, 200),
+        fetchStats(),
+      ])
+
+      setBackendAvailable(true)
+      setApiHistory(historyData)
+      setApiStats(statsData)
+
+      // Override frontend state with backend-sourced data
+      if (historyData.length > 0) {
+        setTrendData(historyToTrendData(historyData.slice(0, 48))) // last 48 readings for chart
+        setAlerts(historyToAlerts(historyData))
+        setSymptoms(historyToSymptoms(historyData))
+        setCompressors(buildDynamicCompressors(historyData, statsData))
+      }
+
+    } catch (err) {
+      // Backend not reachable — stay on static mock data silently
+      setBackendAvailable(false)
+      console.warn('Backend not available, using static data:', err)
+    }
+  }, [])
+
   // Auto-refresh every 30 seconds
   const doRefresh = useCallback(() => {
-    setSymptoms(generateSymptoms())
-    setAlerts(prev => prev.map(a => ({ ...a })))
-    setTrendData(generateTrendData(24))
+    fetchBackendData()
     setLastRefresh(new Date())
     setCountdown(REFRESH_INTERVAL)
-  }, [])
+  }, [fetchBackendData])
+
+  // Initial data load
+  useEffect(() => {
+    fetchBackendData()
+  }, [fetchBackendData])
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -131,12 +303,30 @@ function DashboardContent() {
             {/* Refresh badge */}
             <div className="hidden lg:flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}>
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-status-ok opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-status-ok" />
+                <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${backendAvailable ? 'bg-status-ok' : 'bg-status-warn'}`} />
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${backendAvailable ? 'bg-status-ok' : 'bg-status-warn'}`} />
               </span>
-              Detection System Active · Refreshing in {countdown}s
+              {backendAvailable
+                ? `ML Model Active · Refreshing in ${countdown}s`
+                : `Static Data Mode · Refreshing in ${countdown}s`
+              }
             </div>
           </div>
+
+          {/* Backend status banner — shows when connected to live ML */}
+          {backendAvailable && apiStats && (
+            <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl text-xs font-semibold animate-fade-in"
+              style={{ background: 'rgba(45,212,191,0.08)', border: '1px solid rgba(45,212,191,0.2)', color: 'var(--color-primary-400)' }}>
+              <i className="fa-solid fa-brain"></i>
+              <span>ML Engine Connected</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>·</span>
+              <span>{apiStats.total_readings} readings analyzed</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>·</span>
+              <span>{apiStats.total_anomalies} anomalies detected ({apiStats.anomaly_rate_percentage}%)</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>·</span>
+              <span>Peak risk: {(apiStats.max_risk_score * 100).toFixed(1)}%</span>
+            </div>
+          )}
 
           {/* Dashboard page */}
           {activePage === 'dashboard' && (
