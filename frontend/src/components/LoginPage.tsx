@@ -14,7 +14,7 @@ export default function LoginPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (login(username, password)) {
-      navigate('/');
+      navigate('/dashboard');
     } else {
       setError('Invalid username or password');
     }
@@ -30,7 +30,7 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md relative animate-fade-up">
         {/* Back button */}
-        <button 
+        <button
           onClick={() => navigate('/')}
           className="flex items-center gap-2 text-white/50 hover:text-white transition-colors mb-8 group"
         >
@@ -105,9 +105,9 @@ export default function LoginPage() {
             </div>
           </div>
         </div>
-        
+
         <p className="text-center mt-8 text-white/30 text-xs tracking-widest uppercase font-semibold">
-          Secure Carrier Intelligent Systems • 2024
+          Secure Carrier Intelligent Systems • 2026
         </p>
       </div>
     </div>

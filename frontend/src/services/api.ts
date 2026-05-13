@@ -13,6 +13,8 @@ export interface HealthResponse {
   timestamp: string
   uptime_seconds: number
   ml_model_loaded: boolean
+  /** Active inference engine: "ML Inference (Random Forest)" or "Mock Mode (ISO 10816 Heuristic)" */
+  prediction_mode: string
 }
 
 export interface PredictionHistoryEntry {

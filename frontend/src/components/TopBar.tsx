@@ -8,6 +8,8 @@ interface TopBarProps {
   searchQuery: string
   onSearchChange: (q: string) => void
   alertCount: number
+  /** Whether the Random Forest model is loaded on the backend. */
+  mlModelLoaded: boolean
 }
 
 export default function TopBar({
@@ -17,6 +19,7 @@ export default function TopBar({
   searchQuery,
   onSearchChange,
   alertCount,
+  mlModelLoaded,
 }: TopBarProps) {
   const { theme, toggleTheme, isDark } = useTheme()
   const [liveTime, setLiveTime] = React.useState(new Date())
@@ -42,6 +45,20 @@ export default function TopBar({
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-status-ok" />
           </span>
           <span className="font-medium">Live Monitoring</span>
+        </div>
+
+        {/* ML Engine Badge */}
+        <div
+          className="hidden md:flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-full font-semibold border"
+          style={{
+            background: mlModelLoaded ? 'rgba(34,197,94,0.08)' : 'rgba(251,191,36,0.08)',
+            color: mlModelLoaded ? 'var(--color-status-ok)' : 'var(--color-accent-amber)',
+            borderColor: mlModelLoaded ? 'rgba(34,197,94,0.25)' : 'rgba(251,191,36,0.25)',
+          }}
+          title={mlModelLoaded ? 'Random Forest model is loaded and running' : 'Heuristic mode — model not found'}
+        >
+          <i className={`fa-solid ${mlModelLoaded ? 'fa-brain' : 'fa-triangle-exclamation'} text-[9px]`} />
+          {mlModelLoaded ? 'RF Model Active' : 'Heuristic Mode'}
         </div>
 
         <div className="hidden md:flex items-center gap-2 text-[11px] px-3 py-1 rounded-full" style={{ background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}>

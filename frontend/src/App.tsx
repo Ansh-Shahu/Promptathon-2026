@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from './context/ThemeContext'
-import { AuthProvider } from './context/AuthContext'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import LandingPage from './components/LandingPage'
 import LoginPage from './components/LoginPage'
 import Sidebar, { type NavPage } from './components/Sidebar'
@@ -36,6 +36,7 @@ import {
 import {
   fetchHistory,
   fetchStats,
+  fetchHealth,
   type PredictionHistoryEntry,
   type DashboardStats,
 } from './services/api'
@@ -167,6 +168,17 @@ function buildDynamicCompressors(
 }
 
 
+/**
+ * Route-level auth guard.
+ * Must be rendered inside <AuthProvider> so useAuth() can reach the context.
+ * Unauthenticated users are redirected to /login and returned here after login.
+ */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuth()
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
 function DashboardContent() {
   const [activePage, setActivePage] = useState<NavPage>('dashboard')
   const [selectedUnit, setSelectedUnit] = useState<string>('CMP-003')
@@ -197,13 +209,15 @@ function DashboardContent() {
   // ── Fetch live data from backend ──────────────────────────────────────────
   const fetchBackendData = useCallback(async () => {
     try {
-      // Fetch history and stats in parallel
-      const [historyData, statsData] = await Promise.all([
+      // Fetch history, stats, and health probe in parallel
+      const [historyData, statsData, healthData] = await Promise.all([
         fetchHistory(0, 200),
         fetchStats(),
+        fetchHealth(),
       ])
 
       setBackendAvailable(true)
+      setMlModelLoaded(healthData.ml_model_loaded)
       setApiHistory(historyData)
       setApiStats(statsData)
 
@@ -272,6 +286,7 @@ function DashboardContent() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           alertCount={unacknowledgedCount}
+          mlModelLoaded={mlModelLoaded}
         />
 
         {/* Page content */}
@@ -462,7 +477,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/dashboard" element={<DashboardContent />} />
+            <Route path="/dashboard" element={<ProtectedRoute><DashboardContent /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

@@ -74,6 +74,7 @@ except ImportError:
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import crud
@@ -194,16 +195,20 @@ app = FastAPI(
         "AI-driven anomaly detection for Commercial HVAC Chillers based on "
         "the **P-F (Potential-to-Failure) curve**, where vibration RMS is the "
         "primary leading indicator of impending mechanical failure.\n\n"
-        "## Current Mode\n"
-        "> ⚠️ **Mock Mode Active.** The Random Forest model is not yet trained. "
-        "Predictions are generated using an ISO 10816 vibration threshold "
-        "heuristic (`vibration_rms > 4.5 mm/s`) to unblock frontend development.\n\n"
+        "## Prediction Engine\n"
+        "The active inference engine is reported dynamically at runtime. "
+        "Check **`GET /api/v1/health`** → `prediction_mode` field for the current status:\n"
+        "- `ML Inference (Random Forest)` — trained `model.pkl` is loaded and running.\n"
+        "- `Mock Mode (ISO 10816 Heuristic)` — model artifact not found; "
+        "predictions use the ISO 10816 vibration threshold (4.5 mm/s) as a fallback.\n\n"
         "## Endpoints\n"
         "- **`POST /api/v1/predict`** — Submit a real-time sensor reading and "
         "receive a failure risk score, anomaly flag, and actionable maintenance alert.\n"
-        "- **`GET /api/v1/history`** — Retrieve the 100 most recent sensor "
-        "readings and their associated ML prediction results.\n"
-        "- **`GET /api/v1/health`** — Liveness and readiness probe.\n\n"
+        "- **`GET /api/v1/history`** — Retrieve paginated sensor readings and "
+        "their associated ML prediction results.\n"
+        "- **`GET /api/v1/stats`** — Aggregate KPI snapshot (total readings, "
+        "anomaly rate, peak and average risk score).\n"
+        "- **`GET /api/v1/health`** — Liveness/readiness probe with live model status.\n\n"
         "## Sensor Schema\n"
         "All 10 sensor parameters are validated against physical bounds wide "
         "enough to admit P-F curve degradation states. See `SensorPayload` for "
@@ -419,23 +424,29 @@ async def health_check(request: Request) -> dict[str, Any]:
     - **status** — Always `"online"` when this endpoint is reachable.
     - **engine** — Framework identifier for infrastructure routing rules.
     - **version** — API semver; mirrors the value declared in the app factory.
-    - **timestamp** — Current server UTC time in ISO 8601 format. Clients can
-      diff this against their local clock to estimate one-way network latency.
-    - **uptime_seconds** — Fractional seconds since the lifespan startup hook
-      ran. Resets on every uvicorn hot-reload.
-    - **ml_model_loaded** — Reflects whether `app.state.model` has been
-      populated by the lifespan startup block. Currently `False` (mock mode).
+    - **timestamp** — Current server UTC time in ISO 8601 format.
+    - **uptime_seconds** — Fractional seconds since the lifespan startup hook ran.
+    - **ml_model_loaded** — `true` if `model.pkl` loaded successfully at startup.
+    - **prediction_mode** — Human-readable string describing the active inference
+      engine: `"ML Inference (Random Forest)"` when the model is loaded, or
+      `"Mock Mode (ISO 10816 Heuristic)"` when it is not.
     """
     now: datetime = datetime.now(timezone.utc)
     uptime: float = (now - request.app.state.start_time).total_seconds()
+    model_loaded: bool = getattr(request.app.state, "model", None) is not None
 
     return {
-        "status":          "online",
-        "engine":          "FastAPI",
-        "version":         "0.1.0",
-        "timestamp":       now.isoformat(),
-        "uptime_seconds":  round(uptime, 3),
-        "ml_model_loaded": getattr(request.app.state, "model", None) is not None,
+        "status":           "online",
+        "engine":           "FastAPI",
+        "version":          "0.1.0",
+        "timestamp":        now.isoformat(),
+        "uptime_seconds":   round(uptime, 3),
+        "ml_model_loaded":  model_loaded,
+        "prediction_mode":  (
+            "ML Inference (Random Forest)"
+            if model_loaded
+            else "Mock Mode (ISO 10816 Heuristic)"
+        ),
     }
 
 
@@ -697,8 +708,6 @@ async def get_stats(
 
     Returns sentinel zeros and `"N/A"` timestamp when the database is empty.
     """
-    from sqlalchemy.exc import SQLAlchemyError
-
     try:
         stats: dict = crud.get_dashboard_stats(db)
         return DashboardStatsResponse(**stats)

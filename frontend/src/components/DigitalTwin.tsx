@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { Compressor } from '../data/mockData'
 import { getAIPrediction } from '../data/mockData'
+import { submitPrediction, type PredictionRequest } from '../services/api'
 
 interface Props {
   unit: Compressor | null
@@ -15,7 +16,12 @@ export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
   const [vibrationOffset, setVibrationOffset] = useState(0)
   const [simulating, setSimulating] = useState(false)
   const [simResult, setSimResult] = useState<null | {
-    temp: number; vibration: number; pressure: number; efficiency: number; risk: string; recommendation: string
+    temp: number; vibration: number; pressure: number; efficiency: number
+    risk: string; recommendation: string
+    /** Actual ML failure probability (0–1). Undefined when running in offline fallback. */
+    mlScore?: number
+    /** True when the API was unreachable and the local heuristic was used instead. */
+    offline?: boolean
   }>(null)
 
   if (!unit) {
@@ -36,35 +42,82 @@ export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
 
   const prediction = getAIPrediction(unit)
 
-  const runSimulation = () => {
+  const runSimulation = async () => {
     setSimulating(true)
-    setTimeout(() => {
-      const tempIncrease = (loadMultiplier - 1) * 15 + ambientTempOffset
-      const vibIncrease = (loadMultiplier - 1) * 2.5 + vibrationOffset
-      const pressureDrop = (loadMultiplier - 1) * 12 - pressureOffset
-      const effDrop = (loadMultiplier - 1) * 8 + (Math.abs(ambientTempOffset) * 0.3) + (Math.abs(vibrationOffset) * 4) + (Math.abs(pressureOffset) * 0.2)
 
-      const simTemp = Math.round(unit.temperature + tempIncrease)
-      const simVib = +(unit.vibration + vibIncrease).toFixed(1)
-      const simPressure = Math.round(unit.pressure - pressureDrop)
-      const simEff = Math.max(40, Math.min(100, +(unit.efficiency - effDrop).toFixed(1)))
+    // ── Step 1: Compute simulated display values (same math as before) ────────
+    const tempIncrease  = (loadMultiplier - 1) * 15 + ambientTempOffset
+    const vibIncrease   = (loadMultiplier - 1) * 2.5 + vibrationOffset
+    const pressureDrop  = (loadMultiplier - 1) * 12 - pressureOffset
+    const effDrop       = (loadMultiplier - 1) * 8
+                        + Math.abs(ambientTempOffset) * 0.3
+                        + Math.abs(vibrationOffset) * 4
+                        + Math.abs(pressureOffset) * 0.2
 
+    const simTemp     = Math.round(unit.temperature + tempIncrease)
+    const simVib      = Math.max(0, +(unit.vibration + vibIncrease).toFixed(1))
+    const simPressure = Math.round(unit.pressure - pressureDrop)
+    const simEff      = Math.max(40, Math.min(100, +(unit.efficiency - effDrop).toFixed(1)))
+
+    // ── Step 2: Build full sensor payload for /api/v1/predict ─────────────────
+    // The unit prop carries 5 of the 9 required sensor fields.
+    // The remaining 4 (suction_temp, suction_press, oil_pressure, ambient_temp)
+    // are estimated from standard HVAC chiller operating relationships so the
+    // Random Forest receives a physically plausible 9-feature vector.
+    const payload: PredictionRequest = {
+      timestamp:       new Date().toISOString(),
+      discharge_temp:  simTemp,
+      suction_temp:    Math.max(30, simTemp - 45),            // typical chiller ΔT ≈ 45°F
+      discharge_press: simPressure,
+      suction_press:   Math.max(10, +(simPressure / 2.7).toFixed(1)), // compression ratio ≈ 2.7
+      vibration_rms:   simVib,
+      power_draw:      Math.max(50, +(unit.powerDraw * loadMultiplier).toFixed(1)),
+      oil_pressure:    62.0,                                  // nominal for a healthy compressor
+      runtime_hours:   unit.runtime,
+      ambient_temp:    75 + ambientTempOffset,                // 75°F base + user slider
+    }
+
+    // ── Step 3: Call real ML endpoint, fall back to local heuristic ───────────
+    try {
+      const mlResult  = await submitPrediction(payload)
+      const score     = mlResult.failure_risk_score
+      const risk      = score >= 0.9 ? 'Critical'
+                      : score >= 0.7 ? 'High'
+                      : score >= 0.4 ? 'Moderate'
+                      : 'Low'
+
+      setSimResult({
+        temp: simTemp, vibration: simVib, pressure: simPressure, efficiency: simEff,
+        risk,
+        recommendation: mlResult.actionable_alert,
+        mlScore:  score,
+        offline:  false,
+      })
+    } catch {
+      // Backend unreachable — degrade gracefully to the local heuristic.
+      // The user sees the same result card with an "Offline Estimate" badge.
       let risk = 'Low'
       let recommendation = 'System can handle these parameters. Continue monitoring.'
       if (simTemp > 85 || simVib > 4.0 || simPressure < 100) {
         risk = 'Critical'
-        recommendation = `These simulated conditions would cause critical failure within 24 hours. NOT recommended. Reduce load and normalize environmental factors.`
+        recommendation = 'These simulated conditions would cause critical failure within 24 hours. NOT recommended. Reduce load and normalize environmental factors.'
       } else if (simTemp > 78 || simVib > 3.0 || simPressure < 110) {
         risk = 'High'
-        recommendation = `These parameters increase failure risk significantly. Limit to 4-hour bursts with extended cooldown periods.`
+        recommendation = 'These parameters increase failure risk significantly. Limit to 4-hour bursts with extended cooldown periods.'
       } else if (simTemp > 74 || simVib > 2.0) {
         risk = 'Moderate'
-        recommendation = `This simulation is sustainable short-term. Schedule inspection within 48 hours.`
+        recommendation = 'This simulation is sustainable short-term. Schedule inspection within 48 hours.'
       }
 
-      setSimResult({ temp: simTemp, vibration: simVib, pressure: simPressure, efficiency: simEff, risk, recommendation })
+      setSimResult({
+        temp: simTemp, vibration: simVib, pressure: simPressure, efficiency: simEff,
+        risk, recommendation,
+        mlScore:  undefined,
+        offline:  true,
+      })
+    } finally {
       setSimulating(false)
-    }, 1500)
+    }
   }
 
   const riskColor = (r: string) => {
@@ -177,11 +230,25 @@ export default function DigitalTwin({ unit, allUnits, onSelectUnit }: Props) {
             {/* Results */}
             {simResult && (
               <div className="mt-4 rounded-xl p-4 animate-fade-in" style={{ background: 'var(--bg-card)', border: `1px solid ${riskColor(simResult.risk)}30` }}>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center justify-between gap-2 mb-3">
                   <span className="text-xs font-bold uppercase tracking-wider" style={{ color: riskColor(simResult.risk) }}>
                     <i className="fa-solid fa-triangle-exclamation mr-1"></i>
                     Risk Level: {simResult.risk}
+                    {simResult.mlScore !== undefined && (
+                      <span className="ml-2 font-normal normal-case opacity-75">
+                        — {(simResult.mlScore * 100).toFixed(1)}% failure probability
+                      </span>
+                    )}
                   </span>
+                  {simResult.offline && (
+                    <span
+                      className="text-[9px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0"
+                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+                      title="Backend unreachable — result is a local heuristic estimate"
+                    >
+                      ⚡ Offline Estimate
+                    </span>
+                  )}
                 </div>
                 <div className="grid grid-cols-4 gap-3 mb-3">
                   {[
