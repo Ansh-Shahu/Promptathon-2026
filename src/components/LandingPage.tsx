@@ -14,7 +14,10 @@ import {
   LayoutDashboard,
   LogIn,
   User as UserIcon,
-  LogOut
+  LogOut,
+  Eye,
+  Box,
+  CheckCircle2
 } from 'lucide-react';
 import logo from '../assets/carrier-logo.png';
 import ahu from '../assets/comp-ahu.jpg';
@@ -28,18 +31,22 @@ import ScrollTelling from './ScrollTelling';
 function Header() {
   const navigate = useNavigate();
   const { user, logout, isAuthenticated } = useAuth();
-  const nav = ["Vision", "Components", "Solutions", "Performance"];
+  const nav = [
+    { name: "Vision", icon: <Eye className="h-3.5 w-3.5" /> },
+    { name: "Components", icon: <Box className="h-3.5 w-3.5" /> },
+    { name: "Solutions", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+    { name: "Performance", icon: <Zap className="h-3.5 w-3.5" /> }
+  ];
   const [activeSection, setActiveSection] = React.useState("");
 
   React.useEffect(() => {
     const handleScroll = () => {
-      const sections = nav.map(n => n.toLowerCase());
+      const sections = nav.map(n => n.name.toLowerCase());
       let current = "";
       for (const section of sections) {
         const element = document.getElementById(section);
         if (element) {
           const rect = element.getBoundingClientRect();
-          // Adjust threshold for what is considered "active"
           if (rect.top <= 200 && rect.bottom >= 200) {
             current = section;
           }
@@ -60,22 +67,30 @@ function Header() {
             Carrier <span className="text-primary">Ai</span>
           </span>
         </div>
-        <nav className="hidden items-center gap-8 md:flex">
+        <nav className="hidden items-center gap-12 md:flex">
           {nav.map((n) => {
-            const isActive = activeSection === n.toLowerCase();
+            const isActive = activeSection === n.name.toLowerCase();
             return (
               <a
-                key={n}
-                href={`#${n.toLowerCase()}`}
+                key={n.name}
+                href={`#${n.name.toLowerCase()}`}
                 onClick={(e) => {
                   e.preventDefault();
-                  (window as any).isNavigating = true;
-                  setTimeout(() => { (window as any).isNavigating = false; }, 1500);
-                  document.getElementById(n.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                  (window as any).__navbarNav = true;
+                  window.dispatchEvent(new CustomEvent('navbar-nav-start'));
+                  document.getElementById(n.name.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                  setTimeout(() => {
+                    (window as any).__navbarNav = false;
+                    window.dispatchEvent(new CustomEvent('navbar-nav-end'));
+                  }, 1800);
                 }}
-                className={`text-xs font-semibold uppercase tracking-[0.14em] transition-colors ${isActive ? 'text-orange-500' : 'text-white hover:text-white/80'}`}
+                className={`relative flex items-center gap-2 px-2 text-xs font-semibold uppercase tracking-[0.14em] transition-colors pb-1 ${isActive ? 'text-orange-500' : 'text-white hover:text-white/80'}`}
               >
-                {n}
+                {n.icon}
+                {n.name}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 w-full h-[2px] bg-orange-500 rounded-full" />
+                )}
               </a>
             );
           })}
