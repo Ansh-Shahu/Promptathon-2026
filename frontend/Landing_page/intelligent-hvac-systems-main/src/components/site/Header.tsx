@@ -26,13 +26,13 @@ export function Header() {
         </nav>
         <div className="flex items-center gap-2">
           <a
-            href="#login"
+            href="http://localhost:5175/login"
             className="hidden h-9 items-center justify-center rounded-full border border-border bg-card px-4 text-xs font-semibold uppercase tracking-wider text-foreground transition-colors hover:border-primary/50 sm:inline-flex"
           >
             Log in
           </a>
           <a
-            href="#dashboard"
+            href="http://localhost:5175/dashboard"
             className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-gradient-cta px-4 text-xs font-semibold uppercase tracking-wider text-primary-foreground shadow-card transition-all hover:-translate-y-0.5 hover:shadow-elevated"
           >
             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Activity, Gauge, Zap, ThermometerSun, LogIn } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -30,144 +30,175 @@ const ICONS = [ThermometerSun, Gauge, Activity, Zap];
 
 const FOLDERS = ["chiller_compressor", "compressor_ahu", "ahu_pump"];
 const FRAMES_PER_TRANSITION = 192;
+const TOTAL_FRAMES = FOLDERS.length * FRAMES_PER_TRANSITION;
 
 export default function ScrollTelling() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
   const [currentStage, setCurrentStage] = useState(0);
-  
+
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
 
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  const currentFrameRef = useRef(0);
+  const clickAnimRef = useRef<number | null>(null);
+  const isClickAnimating = useRef(false);
+  const isLocked = useRef(false);
+  const lockedScrollY = useRef<number | null>(null);
+  const prevProgress = useRef(0);
+
+  // ─── Image helpers ────────────────────────────────────────────────
 
   const getImagePath = (transitionIndex: number, frame: number) => {
     const safeTrans = Math.max(0, Math.min(2, transitionIndex));
     const safeFrame = Math.max(1, Math.min(FRAMES_PER_TRANSITION, frame));
-    const folder = FOLDERS[safeTrans];
-    const paddedFrame = safeFrame.toString().padStart(5, '0');
-    return `/sequences/${folder}/${paddedFrame}.png`;
+    return `/sequences/${FOLDERS[safeTrans]}/${safeFrame.toString().padStart(5, '0')}.png`;
   };
 
-  const drawImage = (img: HTMLImageElement) => {
+  const getPathForGlobalFrame = (globalFrame: number) => {
+    const sf = Math.max(0, Math.min(TOTAL_FRAMES - 1, globalFrame));
+    const ti = Math.min(2, Math.floor(sf / FRAMES_PER_TRANSITION));
+    const lf = (sf % FRAMES_PER_TRANSITION) + 1;
+    return getImagePath(ti, lf);
+  };
+
+  const drawImage = useCallback((img: HTMLImageElement) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const { width: cw, height: ch } = canvas;
+    const { width: iw, height: ih } = img;
+    const scale = Math.min(cw / iw, ch / ih);
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.drawImage(img, (cw - iw * scale) / 2, (ch - ih * scale) / 2, iw * scale, ih * scale);
+  }, []);
 
-    const { width: canvasWidth, height: canvasHeight } = canvas;
-    const { width: imgWidth, height: imgHeight } = img;
-
-    const scale = Math.min(canvasWidth / imgWidth, canvasHeight / imgHeight);
-    const x = (canvasWidth / 2) - (imgWidth / 2) * scale;
-    const y = (canvasHeight / 2) - (imgHeight / 2) * scale;
-
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-    ctx.drawImage(img, x, y, imgWidth * scale, imgHeight * scale);
-  };
-
-  const loadImageAndDraw = (path: string) => {
+  const loadAndDraw = useCallback((path: string) => {
     if (imageCache.current.has(path)) {
       drawImage(imageCache.current.get(path)!);
       return;
     }
     const img = new Image();
     img.src = path;
-    img.onload = () => {
-      imageCache.current.set(path, img);
-      drawImage(img);
-    };
-  };
+    img.onload = () => { imageCache.current.set(path, img); drawImage(img); };
+  }, [drawImage]);
 
-  const prevProgress = useRef(0);
-  const isLocked = useRef(false);
-  const lockedProgress = useRef<number | null>(null);
+  // Update tracking line via DOM ref (no re-render needed)
+  const updateLine = useCallback((progress: number) => {
+    if (!lineRef.current) return;
+    // Line goes from top:12px to bottom:32px of the container.
+    // Full track height = 100% - 44px. We want progress fraction of that.
+    const pct = progress * 100;
+    const px = progress * 44;
+    lineRef.current.style.height = `calc(${pct}% - ${px}px)`;
+  }, []);
+
+  const renderFrame = useCallback((globalFrame: number) => {
+    currentFrameRef.current = globalFrame;
+    const p = globalFrame / (TOTAL_FRAMES - 1);
+    const stage = Math.min(3, Math.round(p * 3));
+    setCurrentStage(stage);
+    updateLine(p);
+    loadAndDraw(getPathForGlobalFrame(globalFrame));
+  }, [loadAndDraw, updateLine]);
+
+  // ─── Preload ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    for (let i = 1; i <= 15; i++) {
+      const path = getImagePath(0, i);
+      if (!imageCache.current.has(path)) {
+        const img = new Image();
+        img.src = path;
+        img.onload = () => imageCache.current.set(path, img);
+      }
+    }
+  }, []);
+
+  // ─── Prevent scroll during lock (but NOT during navbar nav) ───────
 
   useEffect(() => {
     const preventScroll = (e: WheelEvent | TouchEvent) => {
-      if (isLocked.current) {
-        e.preventDefault();
-      }
+      if ((window as any).__navbarNav) return; // let navbar scroll pass through
+      if (isLocked.current || isClickAnimating.current) e.preventDefault();
     };
-
     window.addEventListener('wheel', preventScroll, { passive: false });
     window.addEventListener('touchmove', preventScroll, { passive: false });
-
     return () => {
       window.removeEventListener('wheel', preventScroll);
       window.removeEventListener('touchmove', preventScroll);
     };
   }, []);
 
+  // ─── Listen for navbar navigation end → snap to nearest stage ─────
+
+  useEffect(() => {
+    const onNavEnd = () => {
+      if (!containerRef.current) return;
+      const { top, height } = containerRef.current.getBoundingClientRect();
+      const scrollableHeight = height - window.innerHeight;
+      let progress = (-top) / scrollableHeight;
+      progress = Math.max(0, Math.min(1, progress));
+      // Snap to nearest stage boundary (no animation)
+      const nearestStage = Math.round(progress * 3);
+      const snapped = nearestStage / 3;
+      const globalFrame = Math.round(snapped * (TOTAL_FRAMES - 1));
+      renderFrame(globalFrame);
+      prevProgress.current = snapped;
+    };
+    window.addEventListener('navbar-nav-end', onNavEnd);
+    return () => window.removeEventListener('navbar-nav-end', onNavEnd);
+  }, [renderFrame]);
+
+  // ─── Scroll-driven animation ──────────────────────────────────────
+
   useEffect(() => {
     const handleScroll = () => {
+      if (isClickAnimating.current) return;
+      // Skip ALL processing during navbar navigation (no locking, no frame updates)
+      if ((window as any).__navbarNav) return;
       if (!containerRef.current) return;
-      
+
       const { top, height } = containerRef.current.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
-      
-      const scrollY = -top;
       const scrollableHeight = height - viewportHeight;
-      
-      let progress = scrollY / scrollableHeight;
+      const containerAbsoluteTop = window.scrollY + top;
+
+      let progress = (-top) / scrollableHeight;
       progress = Math.max(0, Math.min(1, progress));
-      
-      const containerAbsoluteTop = window.scrollY + top; 
 
-      if (isLocked.current && lockedProgress.current !== null) {
-        // Force progress to stay at the locked milestone
-        progress = lockedProgress.current;
-        window.scrollTo({ top: containerAbsoluteTop + progress * scrollableHeight, behavior: 'auto' });
-      } else {
-        // Check if we crossed a milestone (1/3 or 2/3) where a transformation completes
-        const milestones = [0.333, 0.666, 0.99];
-        let crossedMilestone = -1;
+      // Milestone snap
+      if (isLocked.current && lockedScrollY.current !== null) {
+        window.scrollTo({ top: lockedScrollY.current, behavior: 'auto' });
+        return;
+      }
 
-        for (const m of milestones) {
-          // Check if we crossed the threshold in either direction
-          if (
-            (prevProgress.current < m && progress >= m) || 
-            (prevProgress.current > m && progress <= m)
-          ) {
-            crossedMilestone = m;
-            break;
-          }
-        }
-
-        if (crossedMilestone !== -1 && !(window as any).isNavigating) {
+      const milestones = [1 / 3, 2 / 3, 1];
+      for (const m of milestones) {
+        if (
+          (prevProgress.current < m && progress >= m) ||
+          (prevProgress.current > m && progress <= m)
+        ) {
           isLocked.current = true;
-          lockedProgress.current = crossedMilestone;
-          progress = crossedMilestone; 
-          
-          const targetScroll = containerAbsoluteTop + crossedMilestone * scrollableHeight;
-          window.scrollTo({ top: targetScroll, behavior: 'auto' });
-
-          setTimeout(() => {
-            isLocked.current = false;
-            lockedProgress.current = null;
-          }, 500);
+          const snapScroll = containerAbsoluteTop + m * scrollableHeight;
+          lockedScrollY.current = snapScroll;
+          window.scrollTo({ top: snapScroll, behavior: 'auto' });
+          setTimeout(() => { isLocked.current = false; lockedScrollY.current = null; }, 500);
+          break;
         }
       }
 
       prevProgress.current = progress;
-
-      // Use linear progress for smooth continuous morphing
-      const totalFrames = FOLDERS.length * FRAMES_PER_TRANSITION; 
-      const currentGlobalFrame = Math.floor(progress * (totalFrames - 1));
-      
-      const transitionIndex = Math.min(2, Math.floor(currentGlobalFrame / FRAMES_PER_TRANSITION));
-      const localFrame = (currentGlobalFrame % FRAMES_PER_TRANSITION) + 1;
-      
-      let stage = Math.round(progress * 3);
-
-      setCurrentStage(stage);
-      const imagePath = getImagePath(transitionIndex, localFrame);
-      loadImageAndDraw(imagePath);
+      const globalFrame = Math.floor(progress * (TOTAL_FRAMES - 1));
+      renderFrame(globalFrame);
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
-    
+
     const handleResize = () => {
       if (canvasRef.current) {
         const rect = canvasRef.current.parentElement?.getBoundingClientRect();
@@ -185,154 +216,177 @@ export default function ScrollTelling() {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
     };
-  }, []);
+  }, [renderFrame]);
 
-  useEffect(() => {
-    for (let i = 1; i <= 10; i++) {
-      const img = new Image();
-      img.src = getImagePath(0, i);
-      imageCache.current.set(img.src, img);
+  // ─── Click-driven animation (dots) ────────────────────────────────
+
+  const handleDotClick = useCallback((targetStageIndex: number) => {
+    if (clickAnimRef.current !== null) {
+      cancelAnimationFrame(clickAnimRef.current);
+      clickAnimRef.current = null;
     }
-  }, []);
+
+    const targetFrame = Math.round((targetStageIndex / 3) * (TOTAL_FRAMES - 1));
+    const startFrame = currentFrameRef.current;
+    if (startFrame === targetFrame) return;
+
+    isClickAnimating.current = true;
+    isLocked.current = false;
+
+    const DURATION = 3500;
+    const startTime = performance.now();
+    const easeInOut = (t: number) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+    const animate = (now: number) => {
+      const t = Math.min((now - startTime) / DURATION, 1);
+      renderFrame(Math.round(startFrame + (targetFrame - startFrame) * easeInOut(t)));
+
+      if (t < 1) {
+        clickAnimRef.current = requestAnimationFrame(animate);
+      } else {
+        clickAnimRef.current = null;
+        if (containerRef.current) {
+          const { top, height } = containerRef.current.getBoundingClientRect();
+          const scrollableHeight = height - window.innerHeight;
+          const targetScroll = window.scrollY + top + (targetStageIndex / 3) * scrollableHeight;
+          window.scrollTo({ top: targetScroll, behavior: 'auto' });
+          prevProgress.current = targetStageIndex / 3;
+        }
+        setTimeout(() => { isClickAnimating.current = false; }, 300);
+      }
+    };
+
+    clickAnimRef.current = requestAnimationFrame(animate);
+  }, [renderFrame]);
+
+  // ─── JSX ──────────────────────────────────────────────────────────
 
   return (
-    <section 
-      id="components"
-      ref={containerRef} 
-      className="relative bg-white" 
-      style={{ height: '800vh' }}
-    >
-      <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
-        
+    <section id="components" ref={containerRef} className="relative bg-white" style={{ height: '300vh' }}>
+      <div className="sticky top-16 h-[calc(100vh-64px)] w-full flex items-center justify-center overflow-hidden">
+
         {/* Background Ambient Glow */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-[80%] h-[80%] bg-primary/5 rounded-full blur-[150px]" />
         </div>
 
-        {/* Text Container (Left & Right) */}
-        <div className="absolute inset-0 z-10 flex items-center justify-between px-6 md:px-12 lg:px-20 pointer-events-none">
-          {/* Left Text - Strictly constrained to prevent overlap */}
-          <div className="w-[280px] lg:w-[320px] shrink-0">
-            {STAGES.map((stage, i) => (
-              <div 
-                key={i} 
-                className={`transition-all duration-700 absolute top-1/2 -translate-y-1/2 left-6 md:left-12 lg:left-20 w-[280px] lg:w-[320px] ${currentStage === i ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-8'}`}
-              >
-                <h3 className="text-4xl lg:text-5xl font-extrabold italic text-[#020617] mb-4 tracking-tight leading-none">
-                  <span className="text-primary block text-sm font-bold tracking-widest uppercase mb-2 not-italic">Component</span>
-                  {stage.title}
-                </h3>
-                <p className="text-slate-600 text-sm leading-relaxed border-l-2 border-primary pl-4 font-medium">
-                  {stage.left}
-                </p>
-              </div>
-            ))}
-          </div>
+        {/* Headline */}
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 z-30 pointer-events-none text-center w-full">
+          <h2 className="text-2xl md:text-3xl font-extrabold uppercase tracking-widest text-[#020617]">
+            Component Selection
+          </h2>
+        </div>
 
-          {/* Right Timeline Component Nav */}
-          <div className="absolute right-6 md:right-12 lg:right-20 top-1/2 -translate-y-1/2 z-20">
-            <div className="relative flex flex-col gap-[64px] items-center">
-              
-              {/* Background Line */}
-              <div className="absolute left-1/2 -translate-x-1/2 top-[12px] bottom-[32px] w-[2px] bg-slate-300 -z-10" />
-              
-              {/* Active Orange Line */}
-              <div 
-                className="absolute left-1/2 -translate-x-1/2 top-[12px] w-[2px] bg-primary transition-all duration-700 ease-in-out -z-10"
-                style={{ height: `calc(${currentStage} * 33.33%)` }}
-              />
-
-              {STAGES.map((stage, i) => {
-                const isActive = currentStage === i;
-                const isPassed = currentStage > i;
-                
-                // Shorten AHU for the timeline label
-                const shortTitle = stage.title.includes('AHU') ? 'AHU' : stage.title;
-
-                const handleDotClick = (e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  if (!containerRef.current) return;
-                  const { top: containerTop, height: containerHeight } = containerRef.current.getBoundingClientRect();
-                  const viewportHeight = window.innerHeight;
-                  const scrollableHeight = containerHeight - viewportHeight;
-                  const containerAbsoluteTop = window.scrollY + containerTop;
-                  
-                  // Milestones are 0, 1/3, 2/3, 1
-                  const targetProgress = i / 3;
-                  const targetScroll = containerAbsoluteTop + targetProgress * scrollableHeight;
-                  
-                  (window as any).isNavigating = true;
-                  window.scrollTo({ top: targetScroll, behavior: 'smooth' });
-                  
-                  setTimeout(() => {
-                    (window as any).isNavigating = false;
-                  }, 1000);
-                };
-
-                return (
-                  <button 
-                    key={i} 
-                    onClick={handleDotClick}
-                    className="relative flex flex-col items-center gap-2 group cursor-pointer z-[100] outline-none bg-transparent border-none p-4 -m-4 pointer-events-auto"
-                    aria-label={`Go to ${stage.title}`}
-                  >
-                    {/* Circle Indicator */}
-                    <div className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 bg-white group-hover:scale-110 pointer-events-none
-                      ${isActive ? 'border-[#f97316] shadow-[0_0_15px_rgba(249,115,22,0.8)]' : 
-                        isPassed ? 'border-[#f97316]' : 'border-slate-300'}
-                    `}>
-                      {isActive ? (
-                        <div className="h-3 w-3 rounded-full bg-[#f97316]" />
-                      ) : isPassed ? (
-                        <div className="h-2 w-2 rounded-full bg-[#f97316]" />
-                      ) : (
-                        <div className="h-2 w-2 rounded-full bg-slate-200 group-hover:bg-[#f97316]/30 transition-colors" />
-                      )}
-                    </div>
-
-                    {/* Label Below */}
-                    <div className={`transition-all duration-300 text-center text-xs font-bold uppercase tracking-widest whitespace-nowrap group-hover:text-[#f97316] pointer-events-none
-                      ${isActive ? 'text-[#f97316]' : 'text-slate-800'}
-                    `}>
-                      {shortTitle}
-                    </div>
-                  </button>
-                );
-              })}
+        {/* Left Text */}
+        <div className="absolute inset-0 z-10 flex items-center pointer-events-none px-6 md:px-12 lg:px-20">
+          {STAGES.map((stage, i) => (
+            <div
+              key={i}
+              className={`transition-all duration-700 absolute top-1/2 -translate-y-1/2 left-6 md:left-12 lg:left-20 w-[280px] lg:w-[320px] ${
+                currentStage === i ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-8'
+              }`}
+            >
+              <h3 className="text-4xl lg:text-5xl font-extrabold italic text-[#020617] mb-4 tracking-tight leading-none">
+                <span className="text-primary block text-sm font-bold tracking-widest uppercase mb-2 not-italic">Component</span>
+                {stage.title}
+              </h3>
+              <p className="text-slate-600 text-sm leading-relaxed border-l-2 border-primary pl-4 font-medium">
+                {stage.left}
+              </p>
             </div>
+          ))}
+        </div>
+
+        {/* Right Timeline Nav */}
+        <div
+          className="absolute right-6 md:right-12 lg:right-20 top-1/2 -translate-y-1/2 z-[50]"
+          style={{ pointerEvents: 'auto' }}
+        >
+          <div className="relative flex flex-col items-center" style={{ gap: '64px' }}>
+
+            {/* Background grey line */}
+            <div className="absolute left-1/2 -translate-x-1/2 top-[12px] bottom-[32px] w-[2px] bg-slate-300" style={{ zIndex: -1 }} />
+
+            {/* Active orange line — continuous progress via ref */}
+            <div
+              ref={lineRef}
+              className="absolute left-1/2 -translate-x-1/2 top-[12px] w-[2px] bg-[#f97316]"
+              style={{ height: '0px', zIndex: -1, transition: 'height 0.15s ease-out' }}
+            />
+
+            {STAGES.map((stage, i) => {
+              const isActive = currentStage === i;
+              const isPassed = currentStage > i;
+              const shortTitle = stage.title.includes('AHU') ? 'AHU' : stage.title;
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleDotClick(i)}
+                  title={`Navigate to ${stage.title}`}
+                  style={{
+                    pointerEvents: 'auto',
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '16px',
+                    margin: '-16px',
+                    position: 'relative',
+                    zIndex: 100,
+                  }}
+                  aria-label={`Go to ${stage.title}`}
+                >
+                  <div style={{
+                    width: '24px', height: '24px', borderRadius: '50%',
+                    border: `2px solid ${isActive || isPassed ? '#f97316' : '#cbd5e1'}`,
+                    background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: isActive ? '0 0 16px rgba(249,115,22,0.8)' : 'none',
+                    transition: 'all 0.3s ease', flexShrink: 0,
+                  }}>
+                    <div style={{
+                      width: isActive ? '12px' : '8px', height: isActive ? '12px' : '8px',
+                      borderRadius: '50%', background: isActive || isPassed ? '#f97316' : '#e2e8f0',
+                      transition: 'all 0.3s ease',
+                    }} />
+                  </div>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: isActive ? '#f97316' : '#1e293b',
+                    whiteSpace: 'nowrap', transition: 'color 0.3s ease',
+                    pointerEvents: 'none', userSelect: 'none',
+                  }}>
+                    {shortTitle}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Center Canvas - Removed drop-shadow to blend background */}
+        {/* Center Canvas */}
         <div className="relative z-0 w-full md:w-[75%] lg:w-[65%] h-full flex items-center justify-center pointer-events-none">
-          <canvas 
-            ref={canvasRef} 
-            className="w-full h-[90vh] object-contain"
-          />
+          <canvas ref={canvasRef} className="w-full h-[80vh] object-contain" />
         </div>
 
         {/* Access Dashboard Button */}
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20">
-          <button 
+          <button
             onClick={() => {
-              if (isAuthenticated && user?.role === 'admin') {
-                navigate('/dashboard');
-              } else {
-                navigate('/login');
-              }
+              if (isAuthenticated && user?.role === 'admin') navigate('/dashboard');
+              else navigate('/login');
             }}
             className="inline-flex h-12 items-center justify-center gap-3 rounded-full bg-gradient-cta px-8 text-sm font-semibold text-primary-foreground shadow-elevated-lp transition-all hover:brightness-110 hover:scale-105"
           >
             {isAuthenticated && user?.role === 'admin' ? (
-              <>
-                <Activity className="h-5 w-5" />
-                Enter Predictive Dashboard
-              </>
+              <><Activity className="h-5 w-5" /> Enter Predictive Dashboard</>
             ) : (
-              <>
-                <LogIn className="h-5 w-5" />
-                Login to Access Dashboard
-              </>
+              <><LogIn className="h-5 w-5" /> Login to Access Dashboard</>
             )}
           </button>
         </div>
