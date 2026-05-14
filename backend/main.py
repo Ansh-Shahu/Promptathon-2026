@@ -302,6 +302,8 @@ def _predict(payload: SensorPayload) -> PredictionResponse:
         and actionable alert text.
     """
     vibration: float = payload.vibration_rms
+    temp: float = payload.discharge_temp
+    power: float = payload.power_draw
     model = app.state.model
 
     if model is not None:
@@ -316,19 +318,38 @@ def _predict(payload: SensorPayload) -> PredictionResponse:
         )
 
         if is_anomalous:
+            # Dynamic root cause analysis based on telemetry
+            issues = []
+            actions = []
+            if vibration > 4.5:
+                issues.append(f"Vibration at {vibration:.1f} mm/s")
+                actions.append("bearing inspection")
+            if temp > 150.0:
+                issues.append(f"Temp at {temp:.0f}°F")
+                actions.append("coolant check")
+            if power > 350.0:
+                issues.append(f"Power at {power:.0f} kW")
+                actions.append("motor winding diagnostic")
+            
+            if not issues:
+                issues.append("Complex multi-parameter degradation")
+                actions.append("comprehensive system diagnostic")
+
+            issue_str = " | ".join(issues)
+            action_str = " & ".join(actions)
+            urgency = "CRITICAL RISK" if risk_score >= 0.90 else "HIGH RISK"
+            window = "24 hours" if risk_score >= 0.90 else "72 hours"
+
             actionable_alert: str = (
-                f"⚠️ HIGH RISK ({risk_score:.0%}): ML model detected failure "
-                f"probability of {risk_score:.4f}. Vibration RMS at "
-                f"{vibration:.2f} mm/s. "
-                "Immediate bearing inspection recommended. "
-                "Schedule maintenance within 72 hours to prevent unplanned downtime."
+                f"⚠️ {urgency} ({risk_score:.0%}): {issue_str}. "
+                f"Immediate {action_str} recommended. "
+                f"Schedule maintenance within {window}."
             )
         else:
             actionable_alert = (
                 f"✅ NOMINAL ({risk_score:.0%}): ML model assessed failure "
-                f"probability at {risk_score:.4f}. All sensor parameters within "
-                "acceptable operating range. "
-                "No maintenance action required. Continue scheduled monitoring."
+                f"probability at {risk_score:.4f}. All parameters within "
+                "normal range. No action required."
             )
     else:
         # ── FALLBACK: ISO 10816 MOCK MODE ─────────────────────────────────────
@@ -340,12 +361,11 @@ def _predict(payload: SensorPayload) -> PredictionResponse:
                 ANOMALOUS_RISK_SCORE_MAX,
             )
             is_anomalous = True
+            urgency = "CRITICAL RISK" if risk_score >= 0.90 else "HIGH RISK"
             actionable_alert = (
-                f"⚠️ HIGH RISK ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
-                f"exceeds the ISO 10816 threshold of "
-                f"{ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s. "
-                "Immediate bearing inspection recommended. "
-                "Schedule maintenance within 72 hours to prevent unplanned downtime."
+                f"⚠️ {urgency} ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
+                f"exceeds threshold. Immediate bearing inspection recommended. "
+                "Schedule maintenance within 72 hours."
             )
         else:
             risk_score = random.uniform(

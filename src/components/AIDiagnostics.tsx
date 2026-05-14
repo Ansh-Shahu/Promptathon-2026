@@ -15,6 +15,8 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
   const [showHistory, setShowHistory] = useState(false)
   const [prediction, setPrediction] = useState<AIPrediction | null>(() => unit ? getAIPrediction(unit) : null)
   const [loading, setLoading] = useState(false)
+  // Post-failure emergency cost: what it costs if the compressor actually breaks down
+  const [postDamageCostRange, setPostDamageCostRange] = useState<[number, number] | null>(null)
 
   useEffect(() => {
     if (!unit) return
@@ -53,18 +55,46 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
         
         // Map backend PredictionResponse to frontend AIPrediction shape
         if (isMounted && data) {
+          const risk = data.failure_risk_score as number
+
+          // ── Realistic Carrier HVAC industry cost tiers ────────────────────
+          // Preventive maintenance cost (action taken NOW, before breakdown)
+          let preventiveCost: [number, number]
+          // Emergency / post-failure cost (if ignored and the unit breaks down)
+          let postFailureCost: [number, number] | null
+
+          if (risk >= 0.90) {
+            // CRITICAL — major component failure imminent
+            // Cost: compressor overhaul / motor winding + emergency labour
+            preventiveCost  = [150000, 350000]
+            postFailureCost = [500000, 1500000]
+          } else if (risk >= 0.70) {
+            // HIGH RISK — significant repair needed (bearing, capacitor, refrigerant)
+            preventiveCost  = [75000, 150000]
+            postFailureCost = [300000, 800000]
+          } else if (risk >= 0.40) {
+            // WARNING — preventive service (filter, lubrication, sensor calibration)
+            preventiveCost  = [15000, 45000]
+            postFailureCost = [150000, 300000]
+          } else {
+            // NOMINAL — routine scheduled check, no action required
+            preventiveCost  = [0, 500]
+            postFailureCost = null
+          }
+
           const mappedPrediction: AIPrediction = {
             compressorId: unit.id,
             failureType: data.is_anomalous ? 'Anomalous Signature Detected' : 'Nominal Operation',
             timeToFailure: data.is_anomalous ? 'Check Alert Details' : 'N/A',
-            confidence: Math.floor(data.failure_risk_score * 100),
+            confidence: Math.floor(risk * 100),
             rootCause: data.is_anomalous ? 'Multi-parameter anomaly detected by ML model.' : 'All parameters within normal operating range.',
             suggestedAction: data.actionable_alert,
-            costEstimateRange: data.is_anomalous ? [2000, 5000] : [0, 500],
+            costEstimateRange: preventiveCost,
             energySavingTip: 'Monitor vibration levels to optimize bearing life.',
             optimalRange: { tempMin: 65, tempMax: 75, pressureMin: 125, pressureMax: 140 },
-          };
+          }
           setPrediction(mappedPrediction)
+          setPostDamageCostRange(postFailureCost)
         }
       } catch (error) {
         console.warn('Prediction API unavailable, falling back to local mock data.', error)
@@ -202,15 +232,16 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
         </div>
 
         {/* Cost & Energy Row */}
-        <div className="grid grid-cols-2 gap-3 mb-4 depth-sm">
-          {/* Maintenance Cost Prediction */}
+        <div className="grid grid-cols-2 gap-3 mb-3 depth-sm">
+          {/* Preventive Maintenance Cost */}
           <div className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-[10px] uppercase tracking-wider mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-              <i className="fa-solid fa-indian-rupee-sign text-[9px]"></i> Est. Maintenance Cost
+              <i className="fa-solid fa-indian-rupee-sign text-[9px]"></i> Preventive Maint. Cost
             </p>
-            <p className="text-lg font-bold" style={{ color: effectivePrediction.costEstimateRange[1] > 5000 ? 'var(--color-status-critical)' : effectivePrediction.costEstimateRange[1] > 1000 ? 'var(--color-status-warn)' : 'var(--color-status-ok)' }}>
-              ₹{effectivePrediction.costEstimateRange[0].toLocaleString()} – ₹{effectivePrediction.costEstimateRange[1].toLocaleString()}
+            <p className="text-base font-bold" style={{ color: effectivePrediction.costEstimateRange[1] > 100000 ? 'var(--color-status-critical)' : effectivePrediction.costEstimateRange[1] > 15000 ? 'var(--color-status-warn)' : 'var(--color-status-ok)' }}>
+              ₹{effectivePrediction.costEstimateRange[0].toLocaleString('en-IN')} – ₹{effectivePrediction.costEstimateRange[1].toLocaleString('en-IN')}
             </p>
+            <p className="text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>Act now to prevent failure</p>
           </div>
           {/* Energy Optimization */}
           <div className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
@@ -222,6 +253,27 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
             </p>
           </div>
         </div>
+
+        {/* Post-Failure Emergency Cost — only shown when there is a real risk */}
+        {postDamageCostRange && (
+          <div className="rounded-xl p-3 mb-4 depth-sm animate-fade-in" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)' }}>
+            <p className="text-[10px] uppercase tracking-wider mb-2 flex items-center gap-1.5 font-semibold" style={{ color: '#ef4444' }}>
+              <i className="fa-solid fa-triangle-exclamation text-[10px]"></i>
+              If Left Unattended — Post-Failure Emergency Cost
+            </p>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-base font-bold" style={{ color: '#dc2626' }}>
+                ₹{postDamageCostRange[0].toLocaleString('en-IN')} – ₹{postDamageCostRange[1].toLocaleString('en-IN')}
+              </p>
+              <span className="text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'rgba(239,68,68,0.12)', color: '#b91c1c' }}>
+                {Math.round(postDamageCostRange[1] / effectivePrediction.costEstimateRange[1])}x more expensive
+              </span>
+            </div>
+            <p className="text-[10px] mt-1.5 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              Includes emergency labour, parts replacement, system downtime losses &amp; expedited shipping.
+            </p>
+          </div>
+        )}
 
         {/* Action */}
         {(isCritical || isWarn || unit.status === 'Damaged') && (

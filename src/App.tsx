@@ -184,7 +184,7 @@ function DashboardContent() {
   const [symptoms, setSymptoms] = useState<DetectedSymptom[]>(generateSymptoms)
   const [alerts, setAlerts] = useState<AlertEntry[]>(generateAlerts)
   const [trendData, setTrendData] = useState<TrendDataPoint[]>(() => generateTrendData(24))
-  const [ticketHistory, setTicketHistory] = useState<Ticket[]>(generateTicketHistory)
+  const [ticketHistory, setTicketHistory] = useState<Ticket[]>([])
   const [maintenanceEvents] = useState<MaintenanceEvent[]>(generateMaintenanceSchedule)
   const [weeklyReports] = useState<WeeklyReport[]>(generateWeeklyReports)
 
@@ -316,8 +316,8 @@ function DashboardContent() {
           {/* Backend status banner — shows when connected to live ML */}
           {backendAvailable && apiStats && (
             <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl text-xs font-semibold animate-fade-in"
-              style={{ background: 'rgba(45,212,191,0.08)', border: '1px solid rgba(45,212,191,0.2)', color: 'var(--color-primary-400)' }}>
-              <i className="fa-solid fa-brain"></i>
+              style={{ background: 'rgba(45,212,191,0.08)', border: '1px solid rgba(45,212,191,0.2)', color: 'var(--text-primary)' }}>
+              <i className="fa-solid fa-brain" style={{ color: 'var(--color-primary-400)' }}></i>
               <span>ML Engine Connected</span>
               <span style={{ color: 'var(--text-tertiary)' }}>·</span>
               <span>{apiStats.total_readings} readings analyzed</span>
