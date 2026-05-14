@@ -53,6 +53,12 @@ def main():
         sys.exit(1)
 
     df = pd.read_csv(DATASET_PATH)
+    # ── DEMO FIX ──
+    # Only load the first 400 rows (deep in the healthy baseline) so the dashboard 
+    # starts in a perfectly stable "Normal" (Green) state. This sets up the perfect dramatic 
+    # change when you later run inject_fault.py!
+    df = df.head(400)  
+    
     total_rows = len(df)
     print(f"Rows    : {total_rows}")
     print("-" * 40)

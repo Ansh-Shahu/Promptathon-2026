@@ -39,7 +39,8 @@ FAILURE_LABEL_START: int = 851   # Rows 851–1000 → failure_imminent = 1
 
 START_TIMESTAMP: datetime = datetime(2024, 1, 1, 0, 0, 0)# Updated Output Path Routing
 
-OUTPUT_DIR: Path = Path(r"E:\Promptathon-2026\ml_pipeline")
+SCRIPT_DIR: Path = Path(__file__).resolve().parent
+OUTPUT_DIR: Path = SCRIPT_DIR
 OUTPUT_FILE: Path = OUTPUT_DIR / "hvac_sensor_data.csv"
 
 

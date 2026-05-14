@@ -20,12 +20,12 @@ url = "http://localhost:8000/api/v1/predict"
 fault_payload = {
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     "suction_temp": 41.5,
-    "discharge_temp": 195.0,  # Huge spike (Normal ~100)
+    "discharge_temp": 265.0,  # Huge spike (Normal ~100)
     "suction_press": 63.8,
     "discharge_press": 220.0, # High pressure
-    "vibration_rms": 25.4,    # Extreme vibration (Normal < 4.5)
-    "power_draw": 520.0,      # High power (Normal ~320)
-    "oil_pressure": 40.0,      # Dropping oil pressure (Normal ~60)
+    "vibration_rms": 395.0,    # Extreme vibration (Normal < 4.5)
+    "power_draw": 650.0,      # High power (Normal ~320)
+    "oil_pressure": 35.0,      # Dropping oil pressure (Normal ~60)
     "runtime_hours": 1000,
     "ambient_temp": 90.0,
 }

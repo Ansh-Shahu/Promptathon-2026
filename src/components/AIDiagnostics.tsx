@@ -20,94 +20,16 @@ export default function AIDiagnostics({ unit, onGenerateTicket, ticketHistory, c
 
   useEffect(() => {
     if (!unit) return
-
-    let isMounted = true
-    const fetchPrediction = async () => {
-      setLoading(true)
-
-      // Send selected dummy compressor data to backend for prediction.
-      // Mapping mock Compressor data to the backend's SensorPayload schema.
-      try {
-        const sensorPayload = {
-          timestamp: new Date().toISOString(),
-          suction_temp: unit.temperature * 0.6,
-          discharge_temp: unit.temperature * 1.4,
-          suction_press: unit.pressure * 0.5,
-          discharge_press: unit.pressure * 1.5,
-          vibration_rms: unit.vibration,
-          power_draw: unit.powerDraw,
-          oil_pressure: 60.0,
-          runtime_hours: Math.floor(unit.runtime),
-          ambient_temp: 78.0,
-        };
-
-        const response = await fetch('http://127.0.0.1:8000/api/v1/predict', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sensorPayload),
-        })
-
-        if (!response.ok) {
-          throw new Error(`API error ${response.status}`)
-        }
-
-        const data = await response.json();
-        
-        // Map backend PredictionResponse to frontend AIPrediction shape
-        if (isMounted && data) {
-          const risk = data.failure_risk_score as number
-
-          // ── Realistic Carrier HVAC industry cost tiers ────────────────────
-          // Preventive maintenance cost (action taken NOW, before breakdown)
-          let preventiveCost: [number, number]
-          // Emergency / post-failure cost (if ignored and the unit breaks down)
-          let postFailureCost: [number, number] | null
-
-          if (risk >= 0.90) {
-            // CRITICAL — major component failure imminent
-            // Cost: compressor overhaul / motor winding + emergency labour
-            preventiveCost  = [150000, 350000]
-            postFailureCost = [500000, 1500000]
-          } else if (risk >= 0.70) {
-            // HIGH RISK — significant repair needed (bearing, capacitor, refrigerant)
-            preventiveCost  = [75000, 150000]
-            postFailureCost = [300000, 800000]
-          } else if (risk >= 0.40) {
-            // WARNING — preventive service (filter, lubrication, sensor calibration)
-            preventiveCost  = [15000, 45000]
-            postFailureCost = [150000, 300000]
-          } else {
-            // NOMINAL — routine scheduled check, no action required
-            preventiveCost  = [0, 500]
-            postFailureCost = null
-          }
-
-          const mappedPrediction: AIPrediction = {
-            compressorId: unit.id,
-            failureType: data.is_anomalous ? 'Anomalous Signature Detected' : 'Nominal Operation',
-            timeToFailure: data.is_anomalous ? 'Check Alert Details' : 'N/A',
-            confidence: Math.floor(risk * 100),
-            rootCause: data.is_anomalous ? 'Multi-parameter anomaly detected by ML model.' : 'All parameters within normal operating range.',
-            suggestedAction: data.actionable_alert,
-            costEstimateRange: preventiveCost,
-            energySavingTip: 'Monitor vibration levels to optimize bearing life.',
-            optimalRange: { tempMin: 65, tempMax: 75, pressureMin: 125, pressureMax: 140 },
-          }
-          setPrediction(mappedPrediction)
-          setPostDamageCostRange(postFailureCost)
-        }
-      } catch (error) {
-        console.warn('Prediction API unavailable, falling back to local mock data.', error)
-        if (isMounted) {
-          setPrediction(getAIPrediction(unit))
-        }
-      } finally {
-        if (isMounted) setLoading(false)
-      }
+    setPrediction(getAIPrediction(unit))
+    
+    // Calculate emergency cost bounds
+    if (unit.status === 'Critical') {
+      setPostDamageCostRange([500000, 1500000])
+    } else if (unit.status === 'Warning') {
+      setPostDamageCostRange([150000, 300000])
+    } else {
+      setPostDamageCostRange(null)
     }
-
-    fetchPrediction()
-    return () => { isMounted = false }
   }, [unit])
 
   useEffect(() => {

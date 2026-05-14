@@ -100,13 +100,20 @@ export interface AIPrediction {
 
 export function getAIPrediction(unit: Compressor): AIPrediction {
   if (unit.status === 'Critical') {
+    // Dynamic failure typing based on severity
+    const isCatastrophic = unit.vibration > 50 || unit.temperature > 150;
+    const failureType = isCatastrophic ? 'Catastrophic Mechanical Failure' : 'Compressor Bearing Seizure';
+    const urgency = isCatastrophic ? 'IMMEDIATE AUTO-SHUTDOWN REQUIRED.' : 'Schedule emergency bearing replacement within 24 hours.';
+    const timeToFailure = isCatastrophic ? 'IMMINENT (< 1 hour)' : '36–48 hours';
+    const confidence = isCatastrophic ? 99 : 92;
+    
     return {
       compressorId: unit.id,
-      failureType: 'Compressor Bearing Seizure',
-      timeToFailure: '36–48 hours',
-      confidence: 92,
-      rootCause: `Overheating (${unit.temperature}°F) combined with vibration anomaly (${unit.vibration} mm/s) indicates bearing degradation. Runtime of ${unit.runtime}h exceeds recommended service interval.`,
-      suggestedAction: 'Reduce load by 20% immediately. Schedule emergency bearing replacement within 24 hours. Flush lubrication system.',
+      failureType: failureType,
+      timeToFailure: timeToFailure,
+      confidence: confidence,
+      rootCause: `Extreme readings detected: Overheating (${unit.temperature}°F) combined with vibration anomaly (${unit.vibration} mm/s) indicates severe mechanical degradation. Runtime of ${unit.runtime}h factored into risk.`,
+      suggestedAction: `${urgency} Isolate unit from main power loop and deploy maintenance team. Flush lubrication system.`,
       costEstimateRange: [4500, 8200],
       energySavingTip: `Operating at ${unit.efficiency}% efficiency wastes ~${((100 - unit.efficiency) * unit.powerDraw / 100).toFixed(1)} kW. Restoring to 95%+ saves ₹${((100 - unit.efficiency) * unit.powerDraw * 8 * 30 / 100).toFixed(0)}/month.`,
       optimalRange: { tempMin: 65, tempMax: 75, pressureMin: 125, pressureMax: 140 },
@@ -178,8 +185,8 @@ export const compressors: Compressor[] = [
   {
     id: 'CMP-005', name: 'Carrier 30XW-552',
     location: 'Warehouse — East Wing', sector: 'Industrial',
-    status: 'Damaged', temperature: 81, vibration: 3.1, pressure: 118,
-    powerDraw: 72.3, runtime: 9800, efficiency: 85.7,
+    status: 'Normal', temperature: 74, vibration: 1.8, pressure: 130,
+    powerDraw: 52.3, runtime: 9800, efficiency: 95.7,
     lastMaintenance: '2026-01-05', nextMaintenance: '2026-04-05',
     model: 'Carrier 30XW',
   },
@@ -258,8 +265,8 @@ export const compressors: Compressor[] = [
   {
     id: 'CMP-015', name: 'Carrier 30XW',
     location: 'Logistics Hub', sector: 'Commercial',
-    status: 'Critical', temperature: 85, vibration: 3.9, pressure: 112,
-    powerDraw: 66.8, runtime: 14200, efficiency: 80.1,
+    status: 'Normal', temperature: 72, vibration: 1.6, pressure: 128,
+    powerDraw: 46.8, runtime: 14200, efficiency: 95.1,
     lastMaintenance: '2025-10-20', nextMaintenance: '2026-01-20',
     model: 'Carrier 30XW',
   }
@@ -340,18 +347,26 @@ export function generateAlerts(): AlertEntry[] {
 }
 
 // ── Trend Data Generator ────────────────────────────────
-export function generateTrendData(hours: number = 24): TrendDataPoint[] {
+export function generateTrendData(hours: number = 24, unit?: Compressor): TrendDataPoint[] {
   const data: TrendDataPoint[] = []
   const now = new Date()
+  
+  const baseVib = unit ? unit.vibration : 1.8;
+  const basePres = unit ? unit.pressure : 132;
+  const baseTemp = unit ? unit.temperature : 68;
+  const basePower = unit ? unit.powerDraw : 42;
+  const isBad = unit ? (unit.status === 'Critical' || unit.status === 'Damaged') : false;
+
   for (let i = hours; i >= 0; i--) {
     const t = new Date(now.getTime() - i * 3600000)
-    const progress = (hours - i) / hours
+    const progress = isBad ? (hours - i) / hours : 0; 
+    
     data.push({
       time: t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
-      vibration: +(1.8 + progress * 2.4 + Math.random() * 0.3).toFixed(2),
-      pressure: +(132 - progress * 22 + Math.random() * 3).toFixed(1),
-      temperature: +(68 + progress * 20 + Math.random() * 2).toFixed(1),
-      power: +(42 + progress * 26 + Math.random() * 4).toFixed(1),
+      vibration: +(baseVib * (1 - progress) + (baseVib * progress) + (Math.random() - 0.5) * (baseVib * 0.2)).toFixed(2),
+      pressure: +(basePres + (Math.random() - 0.5) * 4).toFixed(1),
+      temperature: +(baseTemp * (1 - progress) + (baseTemp * progress) + (Math.random() - 0.5) * 5).toFixed(1),
+      power: +(basePower * (1 - progress) + (basePower * progress) + (Math.random() - 0.5) * 10).toFixed(1),
     })
   }
   return data

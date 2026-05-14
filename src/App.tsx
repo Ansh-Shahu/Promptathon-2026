@@ -73,7 +73,7 @@ function historyToAlerts(history: PredictionHistoryEntry[]): AlertEntry[] {
     .slice(0, 10) // Show latest 10 anomaly alerts
     .map((entry, idx) => ({
       id: `API-ALT-${entry.id}`,
-      compressorId: 'CMP-003', // Associated with the primary monitored unit
+      compressorId: 'CMP-004', // The injected unit
       type: 'predictive' as const,
       message: entry.actionable_alert,
       timestamp: entry.timestamp,
@@ -94,7 +94,7 @@ function historyToSymptoms(history: PredictionHistoryEntry[]): DetectedSymptom[]
     if (entry.vibration_rms > 4.5) {
       symptoms.push({
         id: `API-SYM-V-${entry.id}`,
-        compressorId: 'CMP-003',
+        compressorId: 'CMP-004',
         symptom: `Abnormal vibration detected: ${entry.vibration_rms.toFixed(2)} mm/s RMS`,
         severity: 'Critical',
         detectedAt: entry.timestamp,
@@ -105,7 +105,7 @@ function historyToSymptoms(history: PredictionHistoryEntry[]): DetectedSymptom[]
     if (entry.discharge_temp > 120) {
       symptoms.push({
         id: `API-SYM-T-${entry.id}`,
-        compressorId: 'CMP-003',
+        compressorId: 'CMP-004',
         symptom: `Discharge temperature elevated: ${entry.discharge_temp.toFixed(1)}°F`,
         severity: entry.discharge_temp > 150 ? 'Critical' : 'Warning',
         detectedAt: entry.timestamp,
@@ -116,7 +116,7 @@ function historyToSymptoms(history: PredictionHistoryEntry[]): DetectedSymptom[]
     if (entry.power_draw > 360) {
       symptoms.push({
         id: `API-SYM-P-${entry.id}`,
-        compressorId: 'CMP-003',
+        compressorId: 'CMP-004',
         symptom: `Power draw exceeding baseline: ${entry.power_draw.toFixed(1)} kW`,
         severity: 'Warning',
         detectedAt: entry.timestamp,
@@ -143,8 +143,8 @@ function buildDynamicCompressors(
   const latest = history[0] // newest first
 
   return staticCompressors.map(c => {
-    if (c.id === 'CMP-003') {
-      // Map the latest ML-scored reading onto the "critical" unit
+    if (c.id === 'CMP-004') {
+      // Map the latest ML-scored reading onto the "critical" injected unit
       const riskScore = latest.failure_risk_score
       let status: Compressor['status'] = 'Normal'
       if (riskScore >= 0.90) status = 'Critical'
@@ -183,7 +183,6 @@ function DashboardContent() {
   // Live data state — initialized with static mock data, overridden by API
   const [symptoms, setSymptoms] = useState<DetectedSymptom[]>(generateSymptoms)
   const [alerts, setAlerts] = useState<AlertEntry[]>(generateAlerts)
-  const [trendData, setTrendData] = useState<TrendDataPoint[]>(() => generateTrendData(24))
   const [ticketHistory, setTicketHistory] = useState<Ticket[]>([])
   const [maintenanceEvents] = useState<MaintenanceEvent[]>(generateMaintenanceSchedule)
   const [weeklyReports] = useState<WeeklyReport[]>(generateWeeklyReports)
@@ -193,6 +192,13 @@ function DashboardContent() {
 
   const fleetStats = getFleetStats(compressors)
   const selectedCompressor = compressors.find(c => c.id === selectedUnit) || null
+
+  const displayTrendData = React.useMemo(() => {
+    if (selectedUnit === 'CMP-004' && backendAvailable && apiHistory.length > 0) {
+      return historyToTrendData(apiHistory.slice(0, 48))
+    }
+    return generateTrendData(24, selectedCompressor || undefined)
+  }, [selectedUnit, backendAvailable, apiHistory, selectedCompressor])
 
   // ── Fetch live data from backend ──────────────────────────────────────────
   const fetchBackendData = useCallback(async () => {
@@ -209,9 +215,8 @@ function DashboardContent() {
 
       // Override frontend state with backend-sourced data
       if (historyData.length > 0) {
-        setTrendData(historyToTrendData(historyData.slice(0, 48))) // last 48 readings for chart
-        setAlerts(historyToAlerts(historyData))
-        setSymptoms(historyToSymptoms(historyData))
+        setAlerts([...historyToAlerts(historyData), ...generateAlerts()])
+        setSymptoms([...historyToSymptoms(historyData), ...generateSymptoms()])
         setCompressors(buildDynamicCompressors(historyData, statsData))
       }
 
@@ -344,7 +349,7 @@ function DashboardContent() {
                     onSelectUnit={setSelectedUnit}
                     searchQuery={searchQuery}
                   />
-                  <SensorChart data={trendData} />
+                  <SensorChart data={displayTrendData} />
                   <AlertFeed alerts={alerts} onAcknowledge={handleAcknowledge} />
                 </div>
 
@@ -377,7 +382,7 @@ function DashboardContent() {
           {/* Analytics page */}
           {activePage === 'analytics' && (
             <div className="space-y-6">
-              <SensorChart data={trendData} />
+              <SensorChart data={displayTrendData} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
                   <div className="flex items-center justify-between mb-3">
