@@ -137,13 +137,24 @@ function buildDynamicCompressors(
   history: PredictionHistoryEntry[],
   stats: DashboardStats | null,
 ): Compressor[] {
-  if (history.length === 0) return staticCompressors
-
-  // Get the latest reading for the primary monitored unit
-  const latest = history[0] // newest first
+  const latest = history.length > 0 ? history[0] : null
 
   return staticCompressors.map(c => {
-    if (c.id === 'CMP-004') {
+    // Add realistic sensor noise (jitter) around the baseline values
+    const tempJitter = (Math.random() - 0.5) * 4       // +/- 2 degrees
+    const vibJitter = (Math.random() - 0.5) * 0.3      // +/- 0.15 mm/s
+    const pressJitter = (Math.random() - 0.5) * 6      // +/- 3 PSI
+    const powerJitter = (Math.random() - 0.5) * 3      // +/- 1.5 kW
+
+    const updatedC: Compressor = {
+      ...c,
+      temperature: Math.round(c.temperature + tempJitter),
+      vibration: +(Math.max(0.1, c.vibration + vibJitter)).toFixed(2),
+      pressure: Math.round(c.pressure + pressJitter),
+      powerDraw: +(c.powerDraw + powerJitter).toFixed(1),
+    };
+
+    if (c.id === 'CMP-004' && latest) {
       // Map the latest ML-scored reading onto the "critical" injected unit
       const riskScore = latest.failure_risk_score
       let status: Compressor['status'] = 'Normal'
@@ -152,9 +163,9 @@ function buildDynamicCompressors(
       else if (riskScore >= 0.40) status = 'Damaged'
 
       return {
-        ...c,
+        ...updatedC,
         temperature: Math.round(latest.discharge_temp),
-        vibration: +latest.vibration_rms.toFixed(1),
+        vibration: +latest.vibration_rms.toFixed(2),
         pressure: Math.round(latest.discharge_press),
         powerDraw: +latest.power_draw.toFixed(1),
         runtime: latest.runtime_hours,
@@ -162,7 +173,7 @@ function buildDynamicCompressors(
         status,
       }
     }
-    return c
+    return updatedC
   })
 }
 
@@ -217,8 +228,9 @@ function DashboardContent() {
       if (historyData.length > 0) {
         setAlerts([...historyToAlerts(historyData), ...generateAlerts()])
         setSymptoms([...historyToSymptoms(historyData), ...generateSymptoms()])
-        setCompressors(buildDynamicCompressors(historyData, statsData))
       }
+      // Always rebuild compressors to apply live sensor jitter
+      setCompressors(buildDynamicCompressors(historyData, statsData))
 
     } catch (err) {
       // Backend not reachable — stay on static mock data silently
