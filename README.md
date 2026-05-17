@@ -2,7 +2,7 @@
 
 This project is an end-to-end AI-driven Predictive Maintenance dashboard for Commercial HVAC chillers.
 
-## 🚀 How to Run the Demo
+## 🚀 How to Run the Demo (Automated)
 
 To easily start the entire stack (FastAPI Backend + React Frontend + Database Seeding), simply run this command from the project root:
 
@@ -11,6 +11,22 @@ To easily start the entire stack (FastAPI Backend + React Frontend + Database Se
 ```
 
 This will automatically open separate terminal windows for the frontend and backend, and seed the initial baseline data.
+
+## 🛠️ How to Run the Demo (Manual)
+
+If you prefer to start the servers manually instead of using the script, you can do so:
+
+**1. Start the Backend:**
+```powershell
+cd backend
+py main.py
+```
+
+**2. Start the Frontend:**
+Thanks to the wrapper script at the root, you do not need to navigate into the frontend folder. Just run this from the root directory:
+```powershell
+npm run dev
+```
 
 ## ⚠️ How to Inject a Fault
 To simulate a sudden critical failure (huge spikes in vibration, temperature, and power), run:
