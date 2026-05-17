@@ -2,6 +2,11 @@
 
 This project is an end-to-end AI-driven Predictive Maintenance dashboard for Commercial HVAC chillers.
 
+## 🔐 Default Credentials
+When the frontend loads, use these details to log in to the dashboard:
+* **Username:** `admin`
+* **Password:** `admin123`
+
 ## 🚀 How to Run the Demo (Automated)
 
 To easily start the entire stack (FastAPI Backend + React Frontend + Database Seeding), simply run this command from the project root:
