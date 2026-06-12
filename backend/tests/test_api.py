@@ -333,7 +333,7 @@ class TestHealthEndpoint:
 class TestPredictHappyPath:
     """
     Tests for the POST /api/v1/predict endpoint under nominal operating
-    conditions. All tests in this class patch `main._mock_predict` to return
+    conditions. All tests in this class patch `main._predict` to return
     a deterministic PredictionResponse, making assertions exact and instant.
     """
 
@@ -351,7 +351,7 @@ class TestPredictHappyPath:
         test fails, the entire ingestion pipeline is broken and no sensor data
         can be processed — all other predict tests are irrelevant.
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             response = client.post(PREDICT_URL, json=nominal_payload)
         assert response.status_code == 200, (
             f"Expected 200 for nominal payload, got {response.status_code}. "
@@ -373,7 +373,7 @@ class TestPredictHappyPath:
         (actionable_alert). A missing field causes a silent render failure in
         the React component with no visible error boundary.
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             body: dict[str, Any] = client.post(
                 PREDICT_URL, json=nominal_payload
             ).json()
@@ -397,7 +397,7 @@ class TestPredictHappyPath:
         headroom to detect gross serialisation errors (e.g., score becoming 5.0
         or 0.5000000000000001 failing downstream comparisons).
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             body: dict[str, Any] = client.post(
                 PREDICT_URL, json=nominal_payload
             ).json()
@@ -419,7 +419,7 @@ class TestPredictHappyPath:
         unnecessary maintenance dispatches, eroding operator trust in the
         platform and increasing maintenance costs.
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             body: dict[str, Any] = client.post(
                 PREDICT_URL, json=nominal_payload
             ).json()
@@ -442,7 +442,7 @@ class TestPredictHappyPath:
         (non-anomalous) responses also carry a confirmation message, as the
         dashboard renders this in a "System OK" banner that must have content.
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             body: dict[str, Any] = client.post(
                 PREDICT_URL, json=nominal_payload
             ).json()
@@ -469,7 +469,7 @@ class TestPredictHappyPath:
         Note: comparison is done on the date+time components only (ignoring
         timezone offset representation differences between input and output).
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response):
+        with patch("main._predict", return_value=mock_nominal_response):
             body: dict[str, Any] = client.post(
                 PREDICT_URL, json=nominal_payload
             ).json()
@@ -495,7 +495,7 @@ class TestPredictHappyPath:
         a structural test that would catch refactoring errors where the helper
         call is accidentally duplicated or moved inside a conditional branch.
         """
-        with patch("main._mock_predict", return_value=mock_nominal_response) as mock_fn:
+        with patch("main._predict", return_value=mock_nominal_response) as mock_fn:
             client.post(PREDICT_URL, json=nominal_payload)
         mock_fn.assert_called_once()
 
@@ -631,7 +631,7 @@ class TestThermodynamicEdgeCases:
         payload = {**nominal_payload, **payload_overrides}
         chosen_mock = mock_anomalous_response if expect_anomalous else mock_nominal_response
 
-        with patch("main._mock_predict", return_value=chosen_mock):
+        with patch("main._predict", return_value=chosen_mock):
             response = client.post(PREDICT_URL, json=payload)
 
         assert response.status_code == expected_status, (

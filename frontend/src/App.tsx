@@ -2,20 +2,20 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from './context/ThemeContext'
 import { AuthProvider, useAuth } from './context/AuthContext'
-import LandingPage from './components/LandingPage'
-import LoginPage from './components/LoginPage'
-import Sidebar, { type NavPage } from './components/Sidebar'
-import TopBar from './components/TopBar'
-import FleetStats from './components/FleetStats'
-import CompressorTable from './components/CompressorTable'
-import SensorCards from './components/SensorCards'
-import SensorChart from './components/SensorChart'
-import SymptomTimeline from './components/SymptomTimeline'
-import AlertFeed from './components/AlertFeed'
-import AIDiagnostics from './components/AIDiagnostics'
-import DigitalTwin from './components/DigitalTwin'
-import MaintenanceScheduler from './components/MaintenanceScheduler'
-import ReportsPanel from './components/ReportsPanel'
+import LandingPage from './features/landing/components/LandingPage'
+import LoginPage from './features/auth/components/LoginPage'
+import Sidebar, { type NavPage } from './shared/components/Sidebar'
+import TopBar from './shared/components/TopBar'
+import FleetStats from './features/dashboard/components/FleetStats'
+import CompressorTable from './features/dashboard/components/CompressorTable'
+import SensorCards from './features/dashboard/components/SensorCards'
+import SensorChart from './features/dashboard/components/SensorChart'
+import SymptomTimeline from './features/dashboard/components/SymptomTimeline'
+import AlertFeed from './features/alerts/components/AlertFeed'
+import AIDiagnostics from './features/dashboard/components/AIDiagnostics'
+import DigitalTwin from './features/dashboard/components/DigitalTwin'
+import MaintenanceScheduler from './features/scheduler/components/MaintenanceScheduler'
+import ReportsPanel from './features/reports/components/ReportsPanel'
 import {
   compressors as staticCompressors,
   generateSymptoms,
@@ -400,7 +400,7 @@ function DashboardContent() {
                       <i className="fa-solid fa-gauge text-accent-blue"></i>
                       Sensor Overview — {selectedUnit}
                     </h3>
-                    <select 
+                    <select
                       value={selectedUnit}
                       onChange={e => setSelectedUnit(e.target.value)}
                       className="text-xs px-2 py-1.5 rounded-lg outline-none cursor-pointer font-semibold transition-colors"
@@ -437,8 +437,8 @@ function DashboardContent() {
 
           {/* Digital Twin page */}
           {activePage === 'digital-twin' && (
-            <DigitalTwin 
-              unit={selectedCompressor} 
+            <DigitalTwin
+              unit={selectedCompressor}
               allUnits={compressors}
               onSelectUnit={setSelectedUnit}
             />
