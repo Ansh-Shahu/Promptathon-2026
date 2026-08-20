@@ -59,7 +59,6 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Sequence
@@ -78,6 +77,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import crud
+import physics_engine
 from database import Base, SessionLocal, engine, get_db
 from schemas import DashboardStatsResponse, PredictionResponse, SensorPayload
 from config import settings
@@ -99,17 +99,8 @@ logger: logging.Logger = logging.getLogger("hvac_api")
 #  CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ISO 10816-3 velocity threshold for rotating machinery (mm/s RMS).
-# Readings above this classify the machine as operating in the
-# "Potentially Damaged" zone — our primary P-F curve trigger.
-ISO_10816_VIBRATION_THRESHOLD_MMS: float = 4.5
-
-# Mock risk score bands — widen or narrow these to tune alert sensitivity
-# until the real model is wired in.
-ANOMALOUS_RISK_SCORE_MIN: float = 0.75
-ANOMALOUS_RISK_SCORE_MAX: float = 0.99
-NOMINAL_RISK_SCORE_MIN: float = 0.01
-NOMINAL_RISK_SCORE_MAX: float = 0.15
+# (All physical constants and thresholds are now centralised in
+#  physics_engine.py to maintain a single source of truth.)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -287,13 +278,15 @@ def _build_feature_vector(payload: SensorPayload) -> list[list[float]]:
 
 def _predict(payload: SensorPayload) -> PredictionResponse:
     """
-    Generate a failure risk prediction using the trained Random Forest model.
+    Generate a failure risk prediction for an incoming sensor payload.
 
     When `app.state.model` is loaded (model.pkl exists), this function builds
     a feature vector from the sensor payload and calls `predict_proba()` to
     obtain a calibrated probability of imminent failure. When the model is not
-    available (mock mode), it falls back to the ISO 10816 vibration threshold
-    heuristic to keep the API functional for frontend development.
+    available, it falls back to the **deterministic thermodynamic physics
+    engine** (`physics_engine.compute_risk_from_payload()`) which computes
+    risk from first-principles R-134a vapour-compression cycle calculations,
+    bearing degradation modelling, and ambient thermal penalties.
 
     Parameters
     ----------
@@ -357,33 +350,17 @@ def _predict(payload: SensorPayload) -> PredictionResponse:
                 "normal range. No action required."
             )
     else:
-        # ── FALLBACK: ISO 10816 MOCK MODE ─────────────────────────────────────
-        logger.warning("Model not loaded — using mock heuristic for prediction.")
+        # ── FALLBACK: DETERMINISTIC PHYSICS ENGINE ────────────────────────────
+        logger.info("Model not loaded — using physics engine for prediction.")
 
-        if vibration > ISO_10816_VIBRATION_THRESHOLD_MMS:
-            risk_score = random.uniform(
-                ANOMALOUS_RISK_SCORE_MIN,
-                ANOMALOUS_RISK_SCORE_MAX,
-            )
-            is_anomalous = True
-            urgency = "CRITICAL RISK" if risk_score >= 0.90 else "HIGH RISK"
-            actionable_alert = (
-                f"⚠️ {urgency} ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
-                f"exceeds threshold. Immediate bearing inspection recommended. "
-                "Schedule maintenance within 72 hours."
-            )
-        else:
-            risk_score = random.uniform(
-                NOMINAL_RISK_SCORE_MIN,
-                NOMINAL_RISK_SCORE_MAX,
-            )
-            is_anomalous = False
-            actionable_alert = (
-                f"✅ NOMINAL ({risk_score:.0%}): Vibration RMS of {vibration:.2f} mm/s "
-                f"is within the ISO 10816 healthy range "
-                f"(< {ISO_10816_VIBRATION_THRESHOLD_MMS} mm/s). "
-                "No maintenance action required. Continue scheduled monitoring."
-            )
+        risk_score, is_anomalous, actionable_alert = (
+            physics_engine.compute_risk_from_payload(payload.model_dump())
+        )
+
+        logger.info(
+            "Physics engine complete | risk_score=%.6f | is_anomalous=%s",
+            risk_score, is_anomalous,
+        )
 
     return PredictionResponse(
         timestamp=payload.timestamp,
@@ -465,7 +442,7 @@ async def health_check(request: Request) -> dict[str, Any]:
         "prediction_mode":  (
             "ML Inference (Random Forest)"
             if model_loaded
-            else "Mock Mode (ISO 10816 Heuristic)"
+            else "Physics Engine (Thermodynamic Digital Twin)"
         ),
     }
 
@@ -518,15 +495,17 @@ async def predict_failure_risk(
     response delivered to the SCADA client — persistence errors are logged
     server-side without impacting the real-time safety alert pipeline.
 
-    ### Current Behaviour (Mock Mode)
-    Applies an **ISO 10816 vibration threshold heuristic**:
-    - `vibration_rms > 4.5 mm/s` → High risk score (0.75–0.99), anomaly flagged.
-    - `vibration_rms ≤ 4.5 mm/s` → Low risk score (0.01–0.15), nominal.
+    ### Current Behaviour (Physics Engine Fallback)
+    When the ML model is not loaded, the endpoint delegates to the
+    **thermodynamic digital twin physics engine** which computes failure
+    risk from first-principles R-134a vapour-compression cycle calculations,
+    including ambient thermal penalties, bearing degradation modelling,
+    and multi-parameter weighted risk scoring.
 
-    ### Future Behaviour (Model Mode)
-    Replace mock logic in `_mock_predict()` with:
-        `model.predict_proba(feature_vector)[0][1]`
-    once the Scikit-Learn Random Forest artifact is available.
+    ### Model Mode (ML Inference)
+    When `model.pkl` is loaded at startup, the endpoint uses the trained
+    Random Forest model via `model.predict_proba(feature_vector)[0][1]`
+    for calibrated failure probability estimation.
 
     ### Validation
     Pydantic validates the request body automatically before this function
